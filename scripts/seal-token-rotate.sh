@@ -18,7 +18,8 @@ vault_node vault-s
 vault_token ansible-seal
 old_accessor=""
 if [ -s "$file" ]; then
-  old_accessor=$(vault token lookup -format=json "$(cat "$file")" 2>/dev/null | jq -r '.data.accessor' || true)
+  # token=@file: the CLI reads the file itself, so the token never shows in ps.
+  old_accessor=$(vault write -format=json auth/token/lookup token=@"$file" 2>/dev/null | jq -r '.data.accessor' || true)
 fi
 t=$(vault token create -role=autounseal -display-name="vcdx-seal-$node" -field=token)
 new_accessor=$(vault token lookup -format=json "$t" | jq -r '.data.accessor')

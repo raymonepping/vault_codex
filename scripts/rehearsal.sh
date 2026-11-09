@@ -143,8 +143,6 @@ echo "Layers"
 if TF_ONLY=1 ./scripts/drift.sh >/dev/null 2>&1; then row R20 "make drift after the full show (keys are runtime state)" yes "every Terraform plan empty"; else row R20 "make drift after the full show" no "see .build/logs/drift-*.log"; fi
 CONFIRM=yes ./scripts/stage-reset.sh >/dev/null
 if ./scripts/idempotency.sh >/dev/null 2>&1; then row R21 "make idempotency after stage-reset" yes "every Ansible phase changed=0"; else row R21 "make idempotency after stage-reset" no "see .build/logs/idempotency-*.log"; fi
-# idempotency ran validate (the Seeker's decrypts): reset again for a clean ledger.
-CONFIRM=yes ./scripts/stage-reset.sh >/dev/null
 
 echo
 echo "rehearsal: $pass passed, $fail failed in $(($(date +%s) - t_start))s; the stage is fresh"

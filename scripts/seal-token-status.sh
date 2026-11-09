@@ -17,7 +17,8 @@ for node in $VCDX_CLUSTER_NODES; do
     bad=1
     continue
   fi
-  if info=$(vault token lookup -format=json "$(cat "$file")" 2>/dev/null); then
+  # token=@file: the CLI reads the file itself, so the token never shows in ps.
+  if info=$(vault write -format=json auth/token/lookup token=@"$file" 2>/dev/null); then
     ttl=$(jq -r '.data.ttl' <<<"$info")
     printf '%-8s %-10s %-10s %-10s %s\n' "$node" \
       "$(fingerprint "$(jq -r '.data.accessor' <<<"$info")")" "${ttl}s" \

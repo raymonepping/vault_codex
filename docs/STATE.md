@@ -654,3 +654,15 @@ The design from `/backend-design:design`, built on the user's go-ahead:
 Validation: `scripts/ansible.sh validate` (changed=0), `make test-unit` (API
 31 pass), `make lint` clean, `make rehearsal` 58/0 (R24 passes), `make verify`
 84/0, `make test-ui` 24 passed, `make tf-plan-all` both empty.
+
+## Fourth audit (2026-11-09)
+
+- `seal-token-status.sh` and `seal-token-rotate.sh` look a seal token up with
+  `vault write auth/token/lookup token=@file`: the CLI reads the file, so the
+  token no longer appears in `ps`. Proven: `make seal-token-status`, `make
+  seal-token-rotate NODE=vault-2` (new accessor, old one revoked).
+- The second `stage-reset` in `show-ready` and after R21 in the rehearsal are
+  gone: `codex-automation` keeps the checks out of the ledger. Proven: right
+  after `make show-ready` (112s, was 134s) the ledger shows 1 event (the
+  check's own sign-in), 28 hidden, and `france` "never tried"; `make
+  rehearsal` 58/0.
