@@ -1,0 +1,189 @@
+# Phase 12 (ansible validate): asserts only, no changes. Three voters and one
+# leader; the stage matches config/codex.json; every persona signs in
+# (Keycloak, then Vault jwt/) as its own entity with its group policies; the
+# Seeker decodes the manuscript and opens act 1 with the right answer and NOT
+# with a wrong one; the Interceptor opens nothing.
+- name: Validate the lab
+  hosts: localhost
+  gather_facts: false
+  vars:
+    validate_codex: "{{ lookup('ansible.builtin.file', vcdx_root + '/config/codex.json') | from_json }}"
+    validate_platform:
+      X-Vault-Token: "{{ lookup('ansible.builtin.file', vcdx_tokens_dir + '/ansible-platform') }}"
+    validate_expect_policies:
+      keyholders: codex-keyholder
+      seekers: codex-seeker
+      messengers: codex-messenger
+  tasks:
+    - name: Raft configuration
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/sys/storage/raft/configuration"
+        ca_path: "{{ vcdx_ca }}"
+        headers: "{{ validate_platform }}"
+      register: validate_raft
+      check_mode: false
+      no_log: true
+
+    - name: Three voters, one leader
+      ansible.builtin.assert:
+        that:
+          - validate_raft.json.data.config.servers | selectattr('voter') | list | length == 3
+          - validate_raft.json.data.config.servers | selectattr('leader') | list | length == 1
+        quiet: true
+
+    - name: The codex digest
+      ansible.builtin.command:
+        argv: [node, "{{ vcdx_root }}/scripts/codex-check.js", "{{ vcdx_root }}/config/codex.json", --digest]
+      register: validate_digest
+      changed_when: false
+      check_mode: false
+
+    - name: Read the stage
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/codex/data/stage/{{ item }}"
+        ca_path: "{{ vcdx_ca }}"
+        headers: "{{ validate_platform }}"
+      loop: [manuscript, act-1, act-2, act-3, act-4]
+      register: validate_stage
+      check_mode: false
+      no_log: true
+
+    - name: Every stage record carries today's digest
+      ansible.builtin.assert:
+        that: item.json.data.data.codex_digest == validate_digest.stdout
+        quiet: true
+      loop: "{{ validate_stage.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: Each persona's Keycloak token (direct grant on codex-stagehand)
+      ansible.builtin.uri:
+        url: "{{ vcdx_keycloak_addr }}/realms/codex/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: password
+          client_id: codex-stagehand
+          scope: openid
+          username: "{{ item.user }}"
+          password: "{{ lookup('ansible.builtin.file', vcdx_root + '/.secrets/cast/' + item.user) }}"
+      loop: "{{ validate_codex.cast }}"
+      loop_control:
+        label: "{{ item.user }}"
+      register: validate_kc
+      check_mode: false
+      no_log: true
+
+    - name: Each persona signs in to Vault with it
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/auth/jwt/login"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        body_format: json
+        body: { role: persona, jwt: "{{ item.json.access_token }}" }
+      loop: "{{ validate_kc.results }}"
+      loop_control:
+        label: "{{ item.item.user }}"
+      register: validate_login
+      check_mode: false
+      no_log: true
+
+    - name: Personas' tokens by user
+      ansible.builtin.set_fact:
+        validate_tok: >-
+          {{ dict(validate_codex.cast | map(attribute='user')
+             | zip(validate_login.results | map(attribute='json') | map(attribute='auth') | map(attribute='client_token'))) }}
+      no_log: true
+
+    # The login response leaves identity_policies empty; lookup-self has them.
+    - name: Each persona's lookup-self
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/auth/token/lookup-self"
+        ca_path: "{{ vcdx_ca }}"
+        headers: { X-Vault-Token: "{{ validate_tok[item.user] }}" }
+      loop: "{{ validate_codex.cast }}"
+      loop_control:
+        label: "{{ item.user }}"
+      register: validate_self
+      check_mode: false
+      no_log: true
+
+    - name: Each persona is its own entity with exactly its groups' policies
+      ansible.builtin.assert:
+        that:
+          - item.json.data.display_name == 'jwt-' + item.item.user
+          - item.json.data.entity_id | length > 0
+          - (item.json.data.identity_policies | default([]) | sort) == (item.item.groups | map('extract', validate_expect_policies) | sort)
+        fail_msg: "{{ item.item.user }}: {{ item.json.data.identity_policies | default([]) }}"
+        quiet: true
+      loop: "{{ validate_self.results }}"
+      loop_control:
+        label: "{{ item.item.user }}"
+
+    - name: The Seeker decodes the manuscript
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transform/decode/{{ validate_codex.acts[0].role }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: { X-Vault-Token: "{{ validate_tok.seeker }}" }
+        body_format: json
+        body:
+          value: "{{ validate_stage.results[0].json.data.data.value }}"
+          transformation: "{{ validate_codex.acts[0].transformation }}"
+      register: validate_decode
+      check_mode: false
+      failed_when: validate_decode.json.data.decoded_value != validate_codex.acts[0].plaintext
+      no_log: true
+
+    - name: The Seeker opens act 1 with the Prologue's answer, and not with a wrong one
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/decrypt/codex-clues"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: { X-Vault-Token: "{{ validate_tok.seeker }}" }
+        body_format: json
+        body:
+          ciphertext: "{{ validate_stage.results[1].json.data.data.ciphertext }}"
+          context: "{{ item.word | ansible.builtin.b64encode }}"
+        status_code: [200, 400]
+      loop:
+        - { word: "{{ validate_codex.acts[0].answer }}", want: 200 }
+        - { word: france, want: 400 }
+      register: validate_act1
+      check_mode: false
+      failed_when: >-
+        validate_act1.status != item.want or
+        (item.want == 200 and (validate_act1.json.data.plaintext | ansible.builtin.b64decode) != validate_codex.acts[1].plaintext)
+      no_log: true
+
+    - name: The Interceptor opens nothing (policy, not context)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/{{ item.path }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: { X-Vault-Token: "{{ validate_tok.interceptor }}" }
+        body_format: json
+        body: "{{ item.body }}"
+        status_code: [403]
+      loop:
+        - path: transit/decrypt/codex-clues
+          body:
+            ciphertext: "{{ validate_stage.results[1].json.data.data.ciphertext }}"
+            context: "{{ validate_codex.acts[0].answer | ansible.builtin.b64encode }}"
+        - path: transform/decode/{{ validate_codex.acts[0].role }}
+          body:
+            value: "{{ validate_stage.results[0].json.data.data.value }}"
+            transformation: "{{ validate_codex.acts[0].transformation }}"
+      loop_control:
+        label: "{{ item.path }}"
+      check_mode: false
+      no_log: true
+
+    - name: Record the validation gate
+      ansible.builtin.copy:
+        dest: "{{ vcdx_root }}/.build/gates/validation.json"
+        mode: "0644"
+        content: >-
+          {{ {'gate': 'validation', 'result': 'pass', 'personas': validate_codex.cast | length,
+              'digest': validate_digest.stdout[:12]} | to_nice_json }}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vault_codex clue chain",
+  "description": "Validated by scripts/codex-check.js (standard library, no schema engine). Each act's ciphertext is encrypted with the previous act's answer as its Transit context.",
+  "type": "object",
+  "required": ["title", "normalisation", "council", "cast", "acts"],
+  "properties": {
+    "title": { "type": "string" },
+    "normalisation": { "const": "nfc-trim-lower" },
+    "final_message_title": { "type": "string" },
+    "council": {
+      "type": "object",
+      "required": ["group", "approvals"],
+      "properties": { "group": { "type": "string" }, "approvals": { "type": "integer", "minimum": 1 } }
+    },
+    "cast": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["user", "persona", "groups"],
+        "properties": {
+          "user": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
+          "persona": { "type": "string" },
+          "groups": { "type": "array", "items": { "type": "string" } },
+          "story": { "type": "string" }
+        }
+      }
+    },
+    "acts": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "mechanism", "object", "plaintext"],
+        "properties": {
+          "id": { "enum": ["prologue", "act-1", "act-2", "act-3", "act-4"] },
+          "title": { "type": "string" },
+          "mechanism": { "enum": ["transform-fpe", "transit-derived", "response-wrapping", "control-group", "crypto-shred"] },
+          "object": { "type": "string" },
+          "key": { "enum": ["codex-clues", "codex-cryptex"] },
+          "transformation": { "type": "string" },
+          "role": { "type": "string" },
+          "plaintext": { "type": "string" },
+          "riddle": { "type": "string" },
+          "answer": { "type": "string", "pattern": "^[^A-Z\\s]+$" }
+        }
+      }
+    }
+  }
+}

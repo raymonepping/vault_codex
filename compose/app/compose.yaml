@@ -1,0 +1,195 @@
+# compose/app/compose.yaml: the Codex console (prompts 06, 07).
+#
+#   volume-init  one-shot: owners of the named volumes, the web certificate
+#   rotator      keeps the Archivist's (codex-archivist) secret-id valid
+#   vault-agent  the Archivist: token file in the `agent-token` volume
+#   api          the Node BFF: the Archivist's token per call (no VAULT_TOKEN
+#                env var), the stage-hand personas, the three audit logs
+#   web          nginx over TLS 1.3; React console + /api and /auth proxy
+#
+# The only credential handed over by a human is the rotator's own, in
+# .secrets/vault/rotator/ (make rotator-bootstrap). Images: make app-build.
+
+services:
+  # One-shot: chown named volumes. uid 100 (vault) writes the AppRole files
+  # and the token sink; gid 1000 (api) reads the sink; uid 101 (nginx) reads
+  # the web certificate.
+  volume-init:
+    image: ${ALPINE_IMAGE}
+    container_name: vcdx-volume_init
+    user: "0:0"
+    network_mode: none
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        chown 100:1000 /sink /approle && chmod 750 /sink && chmod 700 /approle &&
+        install -d -m 0750 -o 101 -g 101 /web-tls &&
+        install -m 0644 -o 101 -g 101 /src/vault.crt /web-tls/web.crt &&
+        install -m 0600 -o 101 -g 101 /src/vault.key /web-tls/web.key &&
+        install -m 0644 -o 101 -g 101 /src/ca-chain.pem /web-tls/ca-chain.pem &&
+        echo '[volume-init] done'
+    volumes:
+      - agent-token:/sink
+      - approle-app:/approle
+      - web-tls:/web-tls
+      - ../../vault-tls:/src:ro
+    restart: "no"
+
+  rotator:
+    image: ${VAULT_ENT_IMAGE}
+    container_name: vcdx-rotator
+    hostname: rotator
+    user: "100:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp, /home/vault]
+    entrypoint: ["/bin/sh", "/vault/rotator/rotator.sh"]
+    environment:
+      VAULT_ADDR: https://vault-1:8200
+      VAULT_CACERT: /vault/tls/ca-chain.pem
+      TARGET_ROLES: codex-archivist
+      ROTATOR_CREDS_DIR: /run/rotator
+      CHECK_INTERVAL_SECONDS: "60"
+      ROTATE_BELOW_FRACTION: "3"
+      WARN_IF_SHORTER_THAN: "7776000"
+    volumes:
+      - ../../vault-tls/ca-chain.pem:/vault/tls/ca-chain.pem:ro
+      - ../common/rotator:/vault/rotator:ro
+      - ../../.secrets/vault/rotator:/run/rotator:ro        # human-delivered credential
+      - approle-app:/run/approle                            # persistent: current secret-id
+    networks: [default]
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "/bin/sh /vault/rotator/healthcheck.sh"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+
+  vault-agent:
+    image: ${VAULT_ENT_IMAGE}
+    container_name: vcdx-vault_agent
+    hostname: vault-agent
+    user: "100:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp, /home/vault]
+    entrypoint: ["/bin/sh", "/vault/agent/entrypoint.sh"]
+    environment:
+      AGENT_NAME: codex-archivist
+      APPROLE_DIR: /run/approle/codex-archivist
+      TOKEN_FILE: /vault/secrets/token
+      VAULT_ADDR: https://vault-1:8200
+      VAULT_CACERT: /vault/tls/ca-chain.pem
+      HOME: /home/vault
+    volumes:
+      - ../../vault-tls/ca-chain.pem:/vault/tls/ca-chain.pem:ro
+      - ../common/agent/entrypoint.sh:/vault/agent/entrypoint.sh:ro
+      - ./agent/config.hcl:/vault/agent/config.hcl:ro
+      - approle-app:/run/approle:ro       # written by the rotator
+      - agent-token:/vault/secrets        # ephemeral: token sink
+    networks: [default]
+    restart: on-failure
+    depends_on:
+      rotator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /vault/secrets/token && VAULT_TOKEN=$$(cat /vault/secrets/token) vault token lookup >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+
+  api:
+    image: ${VCDX_IMAGE_PREFIX}/api:${VCDX_IMAGE_TAG}
+    container_name: vcdx-api
+    hostname: api
+    # gid 1000 reads the agent's sink (0640) and the three audit logs (0640).
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      PORT: "3000"
+      VAULT_NODES: https://vault-1:8200,https://vault-2:8200,https://vault-3:8200
+      VAULT_TOKEN_FILE: /run/vault/token
+      AUDIT_LOGS: vault-1=/audit/vault-1/audit.log,vault-2=/audit/vault-2/audit.log,vault-3=/audit/vault-3/audit.log
+      CAST_DIR: /run/secrets/cast
+      CONSOLE_CLIENT_SECRET_FILE: /run/secrets/keycloak/console-client-secret
+      BUILD_DIR: /build
+      WRAP_TTL: "${VCDX_WRAP_TTL}"
+      CONSOLE_URL: https://localhost:${VCDX_PORT_WEB}
+      KEYCLOAK_PUBLIC_URL: http://localhost:${VCDX_PORT_KEYCLOAK}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      VAULT_UI_URL: https://localhost:${VCDX_PORT_VAULT_1}
+      NODE_EXTRA_CA_CERTS: /etc/vcdx/ca-chain.pem
+    ports: ["127.0.0.1:${VCDX_PORT_API}:3000"]
+    volumes:
+      - ../../vault-tls/ca-chain.pem:/etc/vcdx/ca-chain.pem:ro
+      - agent-token:/run/vault:ro                     # the Archivist's token (vault-agent's sink)
+      # D11, the stage-hand shortcut: the five personas the presenter plays.
+      # The Seeker signs in through Keycloak's page; their password is not here.
+      - ../../.secrets/cast/courier:/run/secrets/cast/courier:ro
+      - ../../.secrets/cast/interceptor:/run/secrets/cast/interceptor:ro
+      - ../../.secrets/cast/amber:/run/secrets/cast/amber:ro
+      - ../../.secrets/cast/ivory:/run/secrets/cast/ivory:ro
+      - ../../.secrets/cast/onyx:/run/secrets/cast/onyx:ro
+      - ../../.secrets/keycloak/console-client-secret:/run/secrets/keycloak/console-client-secret:ro
+      - ../../.build:/build:ro                        # layers.json, convergence.json
+      - vault-1-audit:/audit/vault-1:ro               # the ledger, one file per node
+      - vault-2-audit:/audit/vault-2:ro
+      - vault-3-audit:/audit/vault-3:ro
+    mem_limit: 256m
+    networks: [default]
+    restart: unless-stopped
+    depends_on:
+      vault-agent:
+        condition: service_healthy
+
+  web:
+    image: ${VCDX_IMAGE_PREFIX}/web:${VCDX_IMAGE_TAG}
+    container_name: vcdx-web
+    hostname: web
+    user: "101:101"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
+      NGINX_ENVSUBST_OUTPUT_DIR: /tmp
+    ports: ["127.0.0.1:${VCDX_PORT_WEB}:8443"]
+    volumes:
+      - web-tls:/etc/nginx/tls:ro
+    networks: [default]
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+networks:
+  default:
+    name: vcdx-internal
+    external: true
+
+volumes:
+  agent-token: {}
+  web-tls: {}
+  approle-app:
+    labels: { io.vcdx.data: "true" }
+  vault-1-audit:
+    external: true
+    name: vcdx-vault_vault-1-audit
+  vault-2-audit:
+    external: true
+    name: vcdx-vault_vault-2-audit
+  vault-3-audit:
+    external: true
+    name: vcdx-vault_vault-3-audit

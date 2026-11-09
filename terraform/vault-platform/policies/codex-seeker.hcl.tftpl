@@ -1,0 +1,42 @@
+# codex-seeker (group seekers): solve the riddles, ask the council.
+# Prologue: decode the manuscript.
+path "transform/decode/codex-scribe" {
+  capabilities = ["update"]
+}
+
+# Acts I, II and IV: decrypt with the answer as the context. There is no
+# path that decrypts without one: the key is derived.
+path "transit/decrypt/codex-clues" {
+  capabilities = ["update"]
+}
+
+# Act III: the cryptex. Held until ${approvals} members of ${group} approve
+# (and the EGP codex-council-not-yourself counts only people other than the
+# requester).
+path "transit/decrypt/codex-cryptex" {
+  capabilities = ["update"]
+  control_group = {
+    ttl = "${ttl}s"
+    factor "council" {
+      identity {
+        group_names = ["${group}"]
+        approvals   = ${approvals}
+      }
+    }
+  }
+}
+
+# The stage: ciphertexts and the manuscript reference.
+path "codex/data/stage/manuscript" {
+  capabilities = ["read"]
+}
+path "codex/data/stage/act-*" {
+  capabilities = ["read"]
+}
+
+path "sys/control-group/request" {
+  capabilities = ["update"]
+}
+path "sys/wrapping/unwrap" {
+  capabilities = ["update"]
+}

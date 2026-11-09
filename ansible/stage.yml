@@ -1,0 +1,9 @@
+# Phase 10 (ansible stage): keys, the manuscript and four ciphertexts from
+# config/codex.json, with ansible-platform. Write-once per digest (D10).
+- name: Dress the stage
+  hosts: localhost
+  gather_facts: false
+  vars:
+    codex_stage_codex: "{{ lookup('ansible.builtin.file', vcdx_root + '/config/codex.json') | from_json }}"
+  roles:
+    - codex_stage

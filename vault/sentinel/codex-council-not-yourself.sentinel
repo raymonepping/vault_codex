@@ -1,0 +1,13 @@
+import "controlgroup"
+
+# The Council (Act III): the cryptex opens only when two Keyholders OTHER than
+# the requester approved. The control-group factor counts approvals from the
+# group keyholders; a Keyholder who requests could otherwise count their own
+# (found in red_doors, proven again on 2.2.1 by make probe, case P14). This
+# endpoint-governing policy ignores the requester's own authorization.
+# Without the import Vault denies every request on the path (gotcha 19).
+authz = controlgroup.authorizations else []
+requester = identity.entity.id else ""
+others = filter authz as a { a.entity.id is not requester }
+
+main = rule { length(authz) is 0 or length(others) >= 2 }

@@ -1,0 +1,12 @@
+# Phase 8 (ansible cast): Keycloak realm codex, the console's two clients and
+# the six personas of config/codex.json, each with a password only
+# .secrets/cast/<user> holds (D11). Talks to Keycloak's admin API with the
+# bootstrap admin password; Vault is not involved yet (Terraform trusts this
+# realm in the next phase).
+- name: Seat the cast
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cast_codex: "{{ lookup('ansible.builtin.file', vcdx_root + '/config/codex.json') | from_json }}"
+  roles:
+    - cast

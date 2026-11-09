@@ -1,0 +1,75 @@
+# make stage-reset: the morning after a show. Deletes both story keys and
+# every stage record, then stages again. Letters already out need no
+# revocation: they expire after 120s, and a letter opened after a reset holds
+# a ciphertext no current key can read.
+- name: Reset the stage
+  hosts: localhost
+  gather_facts: false
+  vars:
+    codex_stage_codex: "{{ lookup('ansible.builtin.file', vcdx_root + '/config/codex.json') | from_json }}"
+    reset_headers:
+      X-Vault-Token: "{{ lookup('ansible.builtin.file', vcdx_tokens_dir + '/ansible-platform') }}"
+  tasks:
+    - name: Read each key before it goes (versions only)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item }}"
+        ca_path: "{{ vcdx_ca }}"
+        headers: "{{ reset_headers }}"
+        status_code: [200, 404]
+      loop: [codex-clues, codex-cryptex]
+      register: reset_keys
+      check_mode: false
+      no_log: true
+
+    - name: Say what goes
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item }}: {{ 'absent' if item.status == 404 else
+             'versions ' ~ (item.json.data['keys'] | list | join(',')) ~ ', min_decryption_version ' ~ item.json.data.min_decryption_version }}
+      loop: "{{ reset_keys.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Make each existing key deletable
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item.item }}/config"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ reset_headers }}"
+        body_format: json
+        body: { deletion_allowed: true }
+        status_code: [200, 204]
+      loop: "{{ reset_keys.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.status == 200
+      no_log: true
+
+    - name: Delete each key
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item.item }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: DELETE
+        headers: "{{ reset_headers }}"
+        status_code: [204]
+      loop: "{{ reset_keys.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.status == 200
+      changed_when: true
+      no_log: true
+
+    - name: Destroy every stage record (all versions and metadata)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/codex/metadata/stage/{{ item }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: DELETE
+        headers: "{{ reset_headers }}"
+        status_code: [204]
+      loop: [manuscript, act-1, act-2, act-3, act-4]
+      changed_when: true
+      no_log: true
+
+    - name: Stage again
+      ansible.builtin.include_role:
+        name: codex_stage

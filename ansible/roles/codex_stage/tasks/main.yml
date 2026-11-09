@@ -1,0 +1,188 @@
+# codex_stage: config/codex.json becomes the clue chain inside Vault (D8,
+# D10), with ansible-platform. Act N is encrypted with act N-1's answer as
+# its context. Answers are already in D9 form (codex-check.js refuses
+# anything else), so the context is just `answer | b64encode`.
+# Write-once per digest: re-stage only when codex.json or a key changed.
+- name: The codex digest (what the stage records)
+  ansible.builtin.command:
+    argv: [node, "{{ vcdx_root }}/scripts/codex-check.js", "{{ vcdx_root }}/config/codex.json", --digest]
+  register: codex_stage_digest
+  changed_when: false
+  check_mode: false
+
+- name: Facts for this run
+  ansible.builtin.set_fact:
+    codex_stage_headers:
+      X-Vault-Token: "{{ lookup('ansible.builtin.file', vcdx_tokens_dir + '/ansible-platform') }}"
+    codex_stage_keys: [codex-clues, codex-cryptex]
+    codex_stage_acts: "{{ codex_stage_codex.acts[1:] }}"
+    codex_stage_answers: "{{ codex_stage_codex.acts | map(attribute='answer', default='') | list }}"
+  no_log: true
+
+- name: Read both story keys
+  ansible.builtin.uri:
+    url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item }}"
+    ca_path: "{{ vcdx_ca }}"
+    headers: "{{ codex_stage_headers }}"
+    status_code: [200, 404]
+  loop: "{{ codex_stage_keys }}"
+  register: codex_stage_key_reads
+  check_mode: false
+  no_log: true
+
+- name: Read the staged records
+  ansible.builtin.uri:
+    url: "{{ vcdx_cluster_addr }}/v1/codex/data/stage/{{ item }}"
+    ca_path: "{{ vcdx_ca }}"
+    headers: "{{ codex_stage_headers }}"
+    status_code: [200, 404]
+  loop: [manuscript, act-1, act-2, act-3, act-4]
+  register: codex_stage_reads
+  check_mode: false
+  no_log: true
+
+- name: Is the stage fresh? (digest matches, each act on its key's latest version and still readable)
+  ansible.builtin.set_fact:
+    codex_stage_fresh: >-
+      {%- set ok = namespace(v=(codex_stage_reads.results | map(attribute='status') | unique | list) == [200]) -%}
+      {%- for r in codex_stage_reads.results[1:] if ok.v -%}
+        {%- set d = r.json.data.data -%}
+        {%- set k = codex_stage_key_reads.results[codex_stage_keys.index(d.key)] -%}
+        {%- if k.status != 200 or d.codex_digest != codex_stage_digest.stdout
+              or (d.key_version | int) != (k.json.data.latest_version | int)
+              or (k.json.data.min_decryption_version | int) > (d.key_version | int) -%}
+          {%- set ok.v = false -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ok.v }}
+  no_log: true
+
+- name: Re-stage needed (codex.json changed, a key was rotated or burned, or nothing is staged)
+  ansible.builtin.debug:
+    msg: "re-staging: digest {{ codex_stage_digest.stdout[:12] }}"
+  changed_when: true
+  when: not codex_stage_fresh
+
+- name: Stage the clue chain
+  when: not codex_stage_fresh
+  block:
+    - name: Create each missing key (derived; the reset may delete it)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item.item }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body: { type: aes256-gcm96, derived: true }
+        status_code: [200, 204]
+      loop: "{{ codex_stage_key_reads.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.status == 404
+      no_log: true
+
+    - name: Allow the reset to delete each key
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/keys/{{ item }}/config"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body: { deletion_allowed: true }
+        status_code: [200, 204]
+      loop: "{{ codex_stage_keys }}"
+      no_log: true
+
+    - name: Encode the manuscript (FF1)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transform/encode/{{ codex_stage_codex.acts[0].role }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body:
+          value: "{{ codex_stage_codex.acts[0].plaintext }}"
+          transformation: "{{ codex_stage_codex.acts[0].transformation }}"
+      register: codex_stage_encoded
+      no_log: true
+
+    - name: Store the manuscript reference
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/codex/data/stage/manuscript"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body:
+          data:
+            value: "{{ codex_stage_encoded.json.data.encoded_value }}"
+            transformation: "{{ codex_stage_codex.acts[0].transformation }}"
+            role: "{{ codex_stage_codex.acts[0].role }}"
+            codex_digest: "{{ codex_stage_digest.stdout }}"
+            staged_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      no_log: true
+
+    # acts[1:][idx] is opened with acts[idx]'s answer (the Prologue's for act 1).
+    - name: Encrypt each act with the previous act's answer as its context
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/transit/encrypt/{{ item.key }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body:
+          plaintext: "{{ item.plaintext | ansible.builtin.b64encode }}"
+          context: "{{ codex_stage_answers[idx] | ansible.builtin.b64encode }}"
+      loop: "{{ codex_stage_acts }}"
+      loop_control:
+        index_var: idx
+        label: "{{ item.id }}"
+      register: codex_stage_cipher
+      no_log: true
+
+    - name: Store each act's ciphertext (never its plaintext)
+      ansible.builtin.uri:
+        url: "{{ vcdx_cluster_addr }}/v1/codex/data/stage/{{ item.item.id }}"
+        ca_path: "{{ vcdx_ca }}"
+        method: POST
+        headers: "{{ codex_stage_headers }}"
+        body_format: json
+        body:
+          data:
+            object: "{{ item.item.object }}"
+            ciphertext: "{{ item.json.data.ciphertext }}"
+            key: "{{ item.item.key }}"
+            key_version: "{{ item.json.data.key_version }}"
+            codex_digest: "{{ codex_stage_digest.stdout }}"
+            staged_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      loop: "{{ codex_stage_cipher.results }}"
+      loop_control:
+        label: "{{ item.item.id }}"
+      no_log: true
+
+- name: Read the stage as it is now
+  ansible.builtin.uri:
+    url: "{{ vcdx_cluster_addr }}/v1/codex/data/stage/{{ item }}"
+    ca_path: "{{ vcdx_ca }}"
+    headers: "{{ codex_stage_headers }}"
+    status_code: [200, 404]
+  loop: [manuscript, act-1, act-2, act-3, act-4]
+  register: codex_stage_now
+  check_mode: false
+  no_log: true
+
+# Non-secret evidence: digest, key versions, times; a fingerprint of the
+# manuscript reference, never a ciphertext.
+- name: Write .build/stage.json
+  ansible.builtin.copy:
+    dest: "{{ vcdx_root }}/.build/stage.json"
+    mode: "0644"
+    content: |-
+      {%- set acts = [] -%}
+      {%- for r in codex_stage_now.results[1:] if r.status == 200 -%}
+      {%- set d = r.json.data.data -%}
+      {%- set _ = acts.append({'id': r.item, 'object': d.object, 'key': d.key, 'key_version': d.key_version | int, 'staged_at': d.staged_at}) -%}
+      {%- endfor -%}
+      {{ {'codex_digest': codex_stage_digest.stdout,
+          'manuscript_fp': (codex_stage_now.results[0].json.data.data.value | default('') | hash('sha256'))[:8],
+          'acts': acts} | to_nice_json }}

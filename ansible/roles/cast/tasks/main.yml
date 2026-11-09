@@ -1,0 +1,283 @@
+# cast: idempotent without reading a password back (Keycloak never returns
+# it): the sha256 of the last password Ansible set lives in
+# .build/cast/<name>.fp; a password is written only when the file's
+# fingerprint differs, or when the user (or client) was just created.
+- name: Secret and evidence directories (0700)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ vcdx_root }}/.secrets/cast"
+    - "{{ vcdx_root }}/.secrets/keycloak"
+    - "{{ vcdx_root }}/.build/cast"
+
+- name: Generate or reuse each persona's password and the console client secret
+  ansible.builtin.set_fact:
+    cast_secrets: >-
+      {{ cast_secrets | default({}) | combine({item.key:
+           lookup('ansible.builtin.password', item.path, length=32, chars=['ascii_letters', 'digits'])}) }}
+  loop: >-
+    {{ cast_codex.cast | map(attribute='user')
+       | map('regex_replace', '^(.*)$', '{"key": "\1", "path": "' + vcdx_root + '/.secrets/cast/\1"}') | map('from_json') | list
+       + [{'key': 'console-client', 'path': vcdx_root + '/.secrets/keycloak/console-client-secret'}] }}
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+
+- name: Secret files are 0600
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: "0600"
+  loop: "{{ cast_codex.cast | map(attribute='user') | map('regex_replace', '^', vcdx_root + '/.secrets/cast/') | list
+            + [vcdx_root + '/.secrets/keycloak/console-client-secret'] }}"
+
+- name: Admin token from the master realm
+  ansible.builtin.uri:
+    url: "{{ vcdx_keycloak_addr }}/realms/master/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: admin-cli
+      username: admin
+      password: "{{ lookup('ansible.builtin.file', vcdx_root + '/.secrets/keycloak/admin-password') }}"
+  register: cast_admin
+  check_mode: false  # a read (or a token); check mode must see the real state
+  retries: 20
+  delay: 3
+  until: cast_admin.status == 200
+  no_log: true
+
+- name: Remember the admin token header
+  ansible.builtin.set_fact:
+    cast_auth: { Authorization: "Bearer {{ cast_admin.json.access_token }}" }
+    cast_api: "{{ vcdx_keycloak_addr }}/admin/realms"
+  no_log: true
+
+# ── realm ─────────────────────────────────────────────────────────────────────
+- name: Does realm codex exist?
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex"
+    headers: "{{ cast_auth }}"
+    status_code: [200, 404]
+  register: cast_realm
+  check_mode: false  # a read (or a token); check mode must see the real state
+  no_log: true
+
+- name: Create realm codex
+  ansible.builtin.uri:
+    url: "{{ cast_api }}"
+    method: POST
+    headers: "{{ cast_auth }}"
+    body_format: json
+    body:
+      realm: codex
+      displayName: "The Keyholder's Codex"
+      enabled: true
+      sslRequired: none
+      accessTokenLifespan: 300
+      ssoSessionIdleTimeout: 3600
+      ssoSessionMaxLifespan: 36000
+      bruteForceProtected: false
+    status_code: [201]
+  when: cast_realm.status == 404
+  changed_when: true
+  no_log: true
+
+# ── clients ───────────────────────────────────────────────────────────────────
+# codex-console: confidential, Authorization Code + PKCE; the API is its BFF.
+# codex-stagehand: public, direct access grants, LAB ONLY: the API signs the
+# presenter's other personas in with their own passwords (D11).
+- name: Look up both clients
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/clients?clientId={{ item }}"
+    headers: "{{ cast_auth }}"
+  loop: [codex-console, codex-stagehand]
+  register: cast_clients
+  check_mode: false  # a read (or a token); check mode must see the real state
+  no_log: true
+
+- name: Create the missing clients
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/clients"
+    method: POST
+    headers: "{{ cast_auth }}"
+    body_format: json
+    body: "{{ cast_client_body[item.item] }}"
+    status_code: [201]
+  loop: "{{ cast_clients.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.json | length == 0
+  register: cast_created_clients
+  changed_when: true
+  no_log: true
+  vars:
+    cast_audience_mapper:
+      name: aud-codex-console
+      protocol: openid-connect
+      protocolMapper: oidc-audience-mapper
+      config:
+        included.client.audience: codex-console
+        access.token.claim: "true"
+        id.token.claim: "false"
+    cast_client_body:
+      codex-console:
+        clientId: codex-console
+        name: The Codex console
+        protocol: openid-connect
+        publicClient: false
+        secret: "{{ cast_secrets['console-client'] }}"
+        standardFlowEnabled: true
+        directAccessGrantsEnabled: false
+        implicitFlowEnabled: false
+        serviceAccountsEnabled: false
+        redirectUris: ["{{ vcdx_web_url }}/auth/callback"]
+        webOrigins: ["{{ vcdx_web_url }}"]
+        attributes:
+          pkce.code.challenge.method: S256
+          post.logout.redirect.uris: "{{ vcdx_web_url }}/*"
+        protocolMappers: ["{{ cast_audience_mapper }}"]
+      codex-stagehand:
+        clientId: codex-stagehand
+        name: The presenter's other personas (lab only)
+        protocol: openid-connect
+        publicClient: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: true
+        implicitFlowEnabled: false
+        protocolMappers: ["{{ cast_audience_mapper }}"]
+
+- name: Console client secret fingerprint
+  ansible.builtin.slurp:
+    src: "{{ vcdx_root }}/.build/cast/console-client.fp"
+  register: cast_client_fp
+  failed_when: false
+  no_log: true
+
+- name: Set the console client secret when it changed (and the client existed)
+  when:
+    - cast_clients.results[0].json | length > 0
+    - (cast_client_fp.content | default('') | b64decode) != (cast_secrets['console-client'] | hash('sha256'))
+  block:
+    - name: Put the secret on codex-console
+      ansible.builtin.uri:
+        url: "{{ cast_api }}/codex/clients/{{ cast_clients.results[0].json[0].id }}"
+        method: PUT
+        headers: "{{ cast_auth }}"
+        body_format: json
+        body: "{{ cast_clients.results[0].json[0] | combine({'secret': cast_secrets['console-client']}) }}"
+        status_code: [204]
+      changed_when: true
+      no_log: true
+
+- name: Record the console client secret fingerprint
+  ansible.builtin.copy:
+    dest: "{{ vcdx_root }}/.build/cast/console-client.fp"
+    content: "{{ cast_secrets['console-client'] | hash('sha256') }}"
+    mode: "0600"
+  no_log: true
+
+# ── personas ──────────────────────────────────────────────────────────────────
+- name: Look up each persona
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/users?username={{ item.user }}&exact=true"
+    headers: "{{ cast_auth }}"
+  loop: "{{ cast_codex.cast }}"
+  loop_control:
+    label: "{{ item.user }}"
+  register: cast_users
+  check_mode: false  # a read (or a token); check mode must see the real state
+  no_log: true
+
+- name: Create the missing personas (fictional; example.org addresses)
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/users"
+    method: POST
+    headers: "{{ cast_auth }}"
+    body_format: json
+    body:
+      username: "{{ item.item.user }}"
+      enabled: true
+      emailVerified: true
+      firstName: "{{ item.item.persona }}"
+      lastName: "of the Codex"
+      email: "{{ item.item.user }}@codex.example.org"
+      requiredActions: []
+      attributes:
+        persona: ["{{ item.item.persona }}"]
+    status_code: [201]
+  loop: "{{ cast_users.results }}"
+  loop_control:
+    label: "{{ item.item.user }}"
+  when: item.json | length == 0
+  register: cast_created
+  changed_when: true
+
+- name: Look up their ids again
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/users?username={{ item.user }}&exact=true"
+    headers: "{{ cast_auth }}"
+  loop: "{{ cast_codex.cast }}"
+  loop_control:
+    label: "{{ item.user }}"
+  register: cast_users
+  check_mode: false  # a read (or a token); check mode must see the real state
+  no_log: true
+
+- name: Read the last-set password fingerprints
+  ansible.builtin.slurp:
+    src: "{{ vcdx_root }}/.build/cast/{{ item.user }}.fp"
+  loop: "{{ cast_codex.cast }}"
+  loop_control:
+    label: "{{ item.user }}"
+  register: cast_fps
+  failed_when: false
+
+- name: Set each password that changed or whose user was just created
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex/users/{{ item.0.json[0].id }}/reset-password"
+    method: PUT
+    headers: "{{ cast_auth }}"
+    body_format: json
+    body:
+      type: password
+      temporary: false
+      value: "{{ cast_secrets[item.0.item.user] }}"
+    status_code: [204]
+  loop: "{{ cast_users.results | zip(cast_fps.results, cast_created.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item.user }}"
+  when: >-
+    (item.2 is changed) or
+    ((item.1.content | default('') | b64decode) != (cast_secrets[item.0.item.user] | hash('sha256')))
+  changed_when: true
+  no_log: true
+
+- name: Record each password's fingerprint
+  ansible.builtin.copy:
+    dest: "{{ vcdx_root }}/.build/cast/{{ item.user }}.fp"
+    content: "{{ cast_secrets[item.user] | hash('sha256') }}"
+    mode: "0600"
+  loop: "{{ cast_codex.cast }}"
+  loop_control:
+    label: "{{ item.user }}"
+  no_log: true
+
+- name: Each persona can sign in through codex-stagehand (the token itself is discarded)
+  ansible.builtin.uri:
+    url: "{{ vcdx_keycloak_addr }}/realms/codex/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      client_id: codex-stagehand
+      username: "{{ item.user }}"
+      password: "{{ cast_secrets[item.user] }}"
+      scope: openid
+  loop: "{{ cast_codex.cast }}"
+  loop_control:
+    label: "{{ item.user }}"
+  no_log: true
+  check_mode: false

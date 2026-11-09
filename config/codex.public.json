@@ -1,0 +1,101 @@
+{
+  "title": "The Keyholder's Codex",
+  "final_message_title": "The Treasure",
+  "council": {
+    "group": "keyholders",
+    "approvals": 2
+  },
+  "cast": [
+    {
+      "user": "seeker",
+      "persona": "Seeker",
+      "groups": [
+        "seekers"
+      ],
+      "story": "The presenter. Solves riddles, requests the cryptex."
+    },
+    {
+      "user": "courier",
+      "persona": "Courier",
+      "groups": [
+        "messengers"
+      ],
+      "story": "Receives the sealed letter."
+    },
+    {
+      "user": "interceptor",
+      "persona": "Interceptor",
+      "groups": [
+        "messengers"
+      ],
+      "story": "Opens what is not theirs."
+    },
+    {
+      "user": "amber",
+      "persona": "Amber",
+      "groups": [
+        "keyholders",
+        "seekers"
+      ],
+      "story": "Keyholder."
+    },
+    {
+      "user": "ivory",
+      "persona": "Ivory",
+      "groups": [
+        "keyholders",
+        "seekers"
+      ],
+      "story": "Keyholder."
+    },
+    {
+      "user": "onyx",
+      "persona": "Onyx",
+      "groups": [
+        "keyholders",
+        "seekers"
+      ],
+      "story": "Keyholder."
+    }
+  ],
+  "acts": [
+    {
+      "id": "prologue",
+      "title": "The Manuscript",
+      "mechanism": "transform-fpe",
+      "object": "manuscript",
+      "transformation": "manuscript",
+      "role": "codex-scribe",
+      "riddle": "On this day a master was born who wrote backwards and painted a smile no one could explain. In which land?"
+    },
+    {
+      "id": "act-1",
+      "title": "The Riddle",
+      "mechanism": "transit-derived",
+      "object": "C1",
+      "key": "codex-clues"
+    },
+    {
+      "id": "act-2",
+      "title": "The Sealed Letter",
+      "mechanism": "response-wrapping",
+      "object": "C2",
+      "key": "codex-clues"
+    },
+    {
+      "id": "act-3",
+      "title": "The Council",
+      "mechanism": "control-group",
+      "object": "C3",
+      "key": "codex-cryptex"
+    },
+    {
+      "id": "act-4",
+      "title": "Burning the Map",
+      "mechanism": "crypto-shred",
+      "object": "C4",
+      "key": "codex-clues"
+    }
+  ],
+  "digest": "cd11a5da002a1a6f0cf3f38ef21465cc4afff35d45c0cc206ed11bf711f7b0a1"
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "./codex.schema.json",
+  "title": "The Keyholder's Codex",
+  "normalisation": "nfc-trim-lower",
+  "final_message_title": "The Treasure",
+  "council": { "group": "keyholders", "approvals": 2 },
+  "cast": [
+    { "user": "seeker", "persona": "Seeker", "groups": ["seekers"], "story": "The presenter. Solves riddles, requests the cryptex." },
+    { "user": "courier", "persona": "Courier", "groups": ["messengers"], "story": "Receives the sealed letter." },
+    { "user": "interceptor", "persona": "Interceptor", "groups": ["messengers"], "story": "Opens what is not theirs." },
+    { "user": "amber", "persona": "Amber", "groups": ["keyholders", "seekers"], "story": "Keyholder." },
+    { "user": "ivory", "persona": "Ivory", "groups": ["keyholders", "seekers"], "story": "Keyholder." },
+    { "user": "onyx", "persona": "Onyx", "groups": ["keyholders", "seekers"], "story": "Keyholder." }
+  ],
+  "acts": [
+    {
+      "id": "prologue",
+      "title": "The Manuscript",
+      "mechanism": "transform-fpe",
+      "object": "manuscript",
+      "transformation": "manuscript",
+      "role": "codex-scribe",
+      "plaintext": "1452-04-15",
+      "riddle": "On this day a master was born who wrote backwards and painted a smile no one could explain. In which land?",
+      "answer": "italy"
+    },
+    {
+      "id": "act-1",
+      "title": "The Riddle",
+      "mechanism": "transit-derived",
+      "object": "C1",
+      "key": "codex-clues",
+      "plaintext": "I am the first colour of the rainbow, the last thing you see before you stop, and what you see when you're angry.",
+      "answer": "red"
+    },
+    {
+      "id": "act-2",
+      "title": "The Sealed Letter",
+      "mechanism": "response-wrapping",
+      "object": "C2",
+      "key": "codex-clues",
+      "plaintext": "Seas, sins, wonders and days of the week. What number rules them all?",
+      "answer": "seven"
+    },
+    {
+      "id": "act-3",
+      "title": "The Council",
+      "mechanism": "control-group",
+      "object": "C3",
+      "key": "codex-cryptex",
+      "plaintext": "Named after the moon, I start the work week and am nobody's favourite.",
+      "answer": "monday"
+    },
+    {
+      "id": "act-4",
+      "title": "Burning the Map",
+      "mechanism": "crypto-shred",
+      "object": "C4",
+      "key": "codex-clues",
+      "plaintext": "The treasure was never the gold. It was knowing who touched it."
+    }
+  ]
+}

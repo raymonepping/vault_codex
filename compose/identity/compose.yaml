@@ -1,0 +1,50 @@
+# compose/identity/compose.yaml: Keycloak, the six personas' identity
+# provider (D11, prompt 04). Realm codex, clients and users are Ansible's
+# (phase cast); this file only runs the server.
+#
+# Browsers reach Keycloak at http://localhost:${VCDX_PORT_KEYCLOAK} (the
+# Seeker's sign-in page), so that is the fixed issuer. Vault fetches the
+# signing keys at http://keycloak:8080 (JWKS) and the API calls the token
+# endpoint there too (backchannel).
+
+services:
+  keycloak:
+    image: ${KEYCLOAK_IMAGE}
+    container_name: vcdx-keycloak
+    hostname: keycloak
+    entrypoint: ["/bin/sh", "/vcdx/entrypoint.sh"]
+    command: start-dev
+    environment:
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://localhost:${VCDX_PORT_KEYCLOAK}"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports: ["127.0.0.1:${VCDX_PORT_KEYCLOAK}:8080"]
+    volumes:
+      - keycloak-data:/opt/keycloak/data   # persistent: dev-file database (realm, users)
+      - ./keycloak/entrypoint.sh:/vcdx/entrypoint.sh:ro
+      - ../../.secrets/keycloak:/run/secrets/keycloak:ro
+    mem_limit: 1g
+    networks:
+      default:
+        aliases: [keycloak]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/master/.well-known/openid-configuration HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+networks:
+  default:
+    name: vcdx-internal
+    external: true
+
+volumes:
+  keycloak-data:
+    labels: { io.vcdx.data: "true" }
+    driver_opts: { o: "uid=1000,gid=0" }
