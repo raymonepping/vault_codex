@@ -104,30 +104,6 @@ export function Drawer({ open, title, onClose, children }) {
   );
 }
 
-// Confirmation with the native <dialog> (focus trap and Escape for free).
-export function Confirm({ open, title, children, confirmLabel, onConfirm, onCancel, busy }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const d = ref.current;
-    if (!d) return;
-    if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
-  }, [open]);
-  return (
-    <dialog ref={ref} className="confirm vg-glass" onClose={onCancel} aria-labelledby="confirm-title">
-      <h2 id="confirm-title">{title}</h2>
-      <div className="confirm__body">{children}</div>
-      <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="button" className="destructive-button" onClick={onConfirm} disabled={busy}>
-          {busy ? 'Working…' : confirmLabel}
-        </button>
-      </div>
-    </dialog>
-  );
-}
 
 export function Loading({ label = 'Asking Vault…' }) {
   return (
@@ -138,6 +114,3 @@ export function Loading({ label = 'Asking Vault…' }) {
   );
 }
 
-export function Check({ ok, yes, no }) {
-  return ok ? <StatePill state="ok">{yes}</StatePill> : <StatePill state="denied">{no}</StatePill>;
-}

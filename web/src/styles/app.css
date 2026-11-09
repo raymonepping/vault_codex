@@ -75,12 +75,6 @@ p { margin: 0; }
 .explain { font-size: 12.5px; color: var(--vg-text-muted); max-width: 900px; }
 .explain svg { display: inline; vertical-align: -2px; margin-right: 4px; }
 
-/* ── Confirm dialog ──────────────────────────────────────── */
-.confirm { border: none; padding: 22px; max-width: min(460px, calc(100vw - 32px)); background: var(--vg-bg-elevated); color: var(--vg-text-primary); }
-.confirm::backdrop { background: var(--vg-scrim); backdrop-filter: blur(2px); }
-.confirm h2 { font-size: 17px; font-weight: 750; margin: 0 0 10px; }
-.confirm__body { font-size: 13px; color: var(--vg-text-secondary); }
-
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 1180px) {
   .hero-grid { grid-template-columns: 1fr; }

@@ -64,6 +64,7 @@ class BadRequest extends StoryError {
 
 // ── plumbing ─────────────────────────────────────────────────────────────────
 function send(res, code, obj, headers = {}) {
+  res.vaultRequestId = obj?.vault?.request_id || null;
   res.writeHead(code, {
     "content-type": "application/json",
     "cache-control": "no-store",
@@ -126,6 +127,22 @@ async function stageRecord(name) {
   return { data: r.json.data.data, vault };
 }
 
+// A letter, a delivered page and a council request belong to the stage that
+// made them. After make stage-reset the keys are new and the old ciphertexts
+// unreadable, so the right answer would be refused: forget them instead.
+const STORY_ITEMS = { "act-2": ["letter", "delivered", "loot"], "act-3": ["council"] };
+function rememberStage(p, actId, stagedAt) {
+  (p.story.stagedAt ||= {})[actId] = stagedAt;
+}
+async function forgetStale(p, actId) {
+  const at = p.story.stagedAt?.[actId];
+  if (!at) return;
+  const { data } = await stageRecord(actId);
+  if (data.staged_at === at) return;
+  for (const k of STORY_ITEMS[actId]) delete p.story[k];
+  delete p.story.stagedAt[actId];
+}
+
 const actPublic = (id) => codex.acts.find((a) => a.id === id);
 const plain = (r) =>
   Buffer.from(r.json.data.plaintext, "base64").toString("utf8");
@@ -163,6 +180,8 @@ const routes = {
       archivist: { tokenPresent: agent },
       audit: ledger.status(),
       stagehands: session.stagehandsAvailable(),
+      // When the stage was set: the console forgets a rehearsal on change.
+      stagedAt: await stageRecord("manuscript").then((s) => s.data.staged_at, () => null),
       vaultUi: (process.env.VAULT_UI_URL || "").replace(/\/$/, "") || null,
     };
   },
@@ -261,6 +280,7 @@ const routes = {
   // ── Act II ───────────────────────────────────────────────────────────────
   "POST /api/act/2/letter": async (req) => {
     const p = await session.requirePerson(req);
+    const staged = await stageRecord("act-2");
     const { r, vault } = await act(
       archivist,
       p,
@@ -276,12 +296,14 @@ const routes = {
     };
     delete p.story.delivered;
     delete p.story.loot;
+    rememberStage(p, "act-2", staged.data.staged_at);
     return { outcome: "sealed", letter: vault.wrap_info, vault };
   },
 
   // Where this session's letter is: the page asks instead of guessing.
   "GET /api/act/2/state": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-2");
     return {
       letter: Boolean(p.story.letter),
       delivered: Boolean(p.story.delivered),
@@ -290,6 +312,7 @@ const routes = {
 
   "POST /api/act/2/intercept": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-2");
     const letter = p.story.letter;
     if (!letter)
       throw new StoryError(
@@ -322,6 +345,7 @@ const routes = {
 
   "POST /api/act/2/deliver": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-2");
     const letter = p.story.letter;
     if (!letter)
       throw new StoryError(
@@ -353,6 +377,7 @@ const routes = {
   "POST /api/act/2/answer": async (req) => {
     const p = await session.requirePerson(req);
     const answer = answerOf(await readBody(req));
+    await forgetStale(p, "act-2");
     if (!p.story.delivered)
       throw new StoryError(
         409,
@@ -393,6 +418,7 @@ const routes = {
       accessor: r.json.wrap_info.accessor,
       requester: actor.user,
     };
+    rememberStage(p, "act-3", s.data.staged_at);
     return {
       outcome: "held",
       requester: actor.user,
@@ -403,6 +429,7 @@ const routes = {
 
   "GET /api/act/3/status": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-3");
     const c = p.story.council;
     if (!c) return { outcome: "none", requester: null };
     const { r, vault } = await act(
@@ -426,6 +453,7 @@ const routes = {
 
   "POST /api/act/3/approve": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-3");
     const b = await readBody(req);
     const c = p.story.council;
     if (!c)
@@ -456,6 +484,7 @@ const routes = {
 
   "POST /api/act/3/open": async (req) => {
     const p = await session.requirePerson(req);
+    await forgetStale(p, "act-3");
     const c = p.story.council;
     const actor = actorFor("act3.open", { person: p, requester: c?.requester });
     const { r, vault } = await act(actor, p, "POST", "sys/wrapping/unwrap", {
@@ -500,6 +529,18 @@ const routes = {
 
   "POST /api/act/4/burn": async (req) => {
     const p = await session.requirePerson(req);
+    // Already burned (the minimum is the latest, above 1): a second press, or
+    // a retried request, must not rotate again.
+    const before = await act(archivist, p, "GET", "transit/keys/codex-clues");
+    const k = before.r.json?.data;
+    if (k && k.latest_version > 1 && k.min_decryption_version === k.latest_version)
+      return {
+        outcome: "burned",
+        already: true,
+        latest_version: k.latest_version,
+        min_decryption_version: k.min_decryption_version,
+        vault: before.vault,
+      };
     const rot = await act(
       archivist,
       p,
@@ -578,6 +619,7 @@ const routes = {
     return {
       since,
       count: events.length,
+      hidden: ledger.hidden({ since }),
       events: events.map(({ context: _c, ...e }) => e),
       nodes: ledger.status(),
     };
@@ -686,8 +728,27 @@ async function authRoute(req, res, url) {
 export const server = http.createServer(async (req, res) => {
   res.setHeader("x-content-type-options", "nosniff");
   const url = new URL(req.url, "http://api");
+  // One JSON line per request; vault_request_id joins it to the audit log.
+  // Polls that went fine stay quiet.
+  const t0 = Date.now();
+  res.on("finish", () => {
+    if (req.method === "GET" && res.statusCode < 400 && /^\/api\/(health|codex|layers|act\/[23]\/(state|status))$/.test(url.pathname)) return;
+    console.log(JSON.stringify({
+      at: new Date().toISOString(),
+      method: req.method,
+      path: url.pathname,
+      status: res.statusCode,
+      ms: Date.now() - t0,
+      vault_request_id: res.vaultRequestId || null,
+    }));
+  });
   if (req.method === "GET" && url.pathname.startsWith("/auth/"))
     return authRoute(req, res, url);
+  if (session.crossSiteWrite(req))
+    return send(res, 403, {
+      ok: false,
+      error: "refused: this request came from another site (Sec-Fetch-Site)",
+    });
   try {
     const handler = routes[`${req.method} ${url.pathname}`];
     if (!handler) {
@@ -715,10 +776,7 @@ export const server = http.createServer(async (req, res) => {
       return send(res, e.status, { ok: false, error: e.message });
     if (e instanceof VaultError)
       return send(res, 502, { ok: false, error: e.message });
-    console.error(
-      `[codex-api] ${req.method} ${url.pathname}:`,
-      e?.message || e,
-    );
+    console.error(`[codex-api] ${req.method} ${url.pathname}:`, e?.stack || e);
     return send(res, 500, { ok: false, error: "internal error" });
   }
 });

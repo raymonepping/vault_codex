@@ -35,6 +35,10 @@ gates="{}"
 for gate in idempotency drift secret-scan boundary validation; do
   gates=$(jq --arg g "$gate" --argjson v "$(json_or_null "$BUILD_DIR/gates/$gate.json")" '.[$g] = $v' <<<"$gates")
 done
+# validation.json has no time on purpose (a timestamp would break idempotency):
+# the validate phase's own recap says when it last ran.
+gates=$(jq --argjson s "$(json_or_null "$BUILD_DIR/ansible-stats/validate.json")" \
+  'if .validation and ($s != null) then .validation.at = $s.finished_at else . end' <<<"$gates")
 jq -n --argjson rows "$rows" --argjson gates "$gates" --argjson conv "$conv" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{generated_at: $at, converged: ($conv.result // null), converged_at: ($conv.finished_at // null),
     automation_digest: ($conv.automation_digest // null), phases: $rows, gates: $gates}' >"$BUILD_DIR/layers.json.tmp"

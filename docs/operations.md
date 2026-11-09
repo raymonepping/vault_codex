@@ -111,7 +111,7 @@ marked "(changes state)" change something; the rest only read.
 | `make verify` | End-to-end checks: podman, vault, platform, stage, app, console, boundary, drift |
 | `make lint` | Static checks, as in CI: shellcheck, terraform fmt and validate, ansible syntax, node --check |
 | `make test-unit` | Unit tests, no stack needed: codex-check, api, web |
-| `make api-test` | Call every API route against the live stack, as each persona |
+| `make api-test` | Same as make rehearsal: every API route, every act, every refusal |
 | `make e2e-install` | (changes state) Install Playwright and Chromium for the UI suite |
 | `make test-ui` | Playwright: every UI journey, headless (needs make up) |
 | `make test-ui-headed` | Playwright: every UI journey in a visible browser |
@@ -139,6 +139,7 @@ Each compose stack also has `make <stack>-logs` (`seal`, `vault`,
 | The console says "sign in" after a restart | sessions live in the API's memory: sign in again |
 | Act II answers HTTP 409 | the Courier has not delivered a letter yet, or it expired (120s): seal a new one |
 | The map is burned and the next show starts | `make stage-reset CONFIRM=yes` |
+| Checking health during a show | `make verify` or `make doctor`: their sign-ins use Keycloak client `codex-automation`, which the ledger leaves out (it counts them as `hidden`) |
 | `make lab` stopped | it printed the resume command: fix, run it, then `make lab` |
 | The Archivist's token is missing | `make agents-status`, then `make rotator-bootstrap` and `make app-up` |
 | A scoped token expired (unused for 32 days) | the root-regen cycle below; the tokens are minted again |

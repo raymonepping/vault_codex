@@ -125,6 +125,7 @@ services:
       CONSOLE_CLIENT_SECRET_FILE: /run/secrets/keycloak/console-client-secret
       BUILD_DIR: /build
       WRAP_TTL: "${VCDX_WRAP_TTL}"
+      SESSION_IDLE_SECONDS: "${VCDX_SESSION_IDLE}"
       CONSOLE_URL: https://localhost:${VCDX_PORT_WEB}
       KEYCLOAK_PUBLIC_URL: http://localhost:${VCDX_PORT_KEYCLOAK}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080

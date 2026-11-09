@@ -4,8 +4,7 @@
 import { useState } from 'react';
 import { call } from '../api.js';
 import { useAction } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
-import { remember } from '../story.js';
+import { remember, useStory } from '../story.js';
 import { useAuth, ErrorNotice, SignInNotice, Mono } from '../components/ui.jsx';
 import { ActHero, Riddle, Said, Refusal, AnswerForm, Attempts, wink } from '../components/codex.jsx';
 

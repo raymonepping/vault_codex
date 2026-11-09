@@ -30,7 +30,7 @@ function Evidence({ p }) {
 function Verdict({ p }) {
   if (p.tool === 'terraform') return p.last_plan ? <StatePill state={p.last_plan.changes ? 'denied' : 'ok'}>{p.last_plan.changes ? 'changes pending' : 'plan empty'}</StatePill> : <StatePill state="warn">not planned</StatePill>;
   if (p.tool === 'ansible') return p.last_run ? <StatePill state={p.last_run.changed ? 'warn' : 'ok'}>changed={p.last_run.changed}</StatePill> : <StatePill state="warn">not run</StatePill>;
-  return <StatePill state="info">make</StatePill>;
+  return null; // the Make badge already says it; Make leaves no plan or recap
 }
 
 export default function Layers() {
@@ -40,7 +40,7 @@ export default function Layers() {
   const count = (t) => phases.filter((p) => p.tool === t).length;
   return (
     <>
-      <ActHero number="scripts/phases.txt · one phase list, three tools" title="Terraform builds the house. Ansible decorates it." lede="Every phase of make lab in order, with the evidence each tool leaves behind, and the gates that must be green before the lab counts as converged.">
+      <ActHero number="One phase list, three tools" title="Terraform builds the house. Ansible decorates it." lede="Every phase of make lab in order, with the evidence each tool leaves behind, and the gates that must be green before the lab counts as converged.">
         {L && (
           <p className="layers-summary">
             {count('terraform')} Terraform · {count('ansible')} Ansible · {count('make')} Make phases · {L.converged === 'success' ? `converged ${ago(L.converged_at)}` : 'not converged yet'}

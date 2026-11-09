@@ -4,8 +4,7 @@ import { useState } from 'react';
 import { Wand2 } from 'lucide-react';
 import { call } from '../api.js';
 import { useAction, useResource } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
-import { remember } from '../story.js';
+import { remember, useStory } from '../story.js';
 import { useAuth, ErrorNotice, SignInNotice, Mono } from '../components/ui.jsx';
 import { ActHero, Riddle, Said, Refusal } from '../components/codex.jsx';
 

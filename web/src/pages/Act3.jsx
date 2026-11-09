@@ -5,8 +5,7 @@ import { useEffect, useState } from 'react';
 import { KeyRound, LockOpen, UserCheck } from 'lucide-react';
 import { call } from '../api.js';
 import { useAction, useResource } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
-import { remember } from '../story.js';
+import { remember, useStory } from '../story.js';
 import { useAuth, ErrorNotice, SignInNotice, Mono, StatePill } from '../components/ui.jsx';
 import { ActHero, Riddle, Said, Refusal, AnswerForm, wink } from '../components/codex.jsx';
 

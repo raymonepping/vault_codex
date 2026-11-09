@@ -38,10 +38,13 @@ jq -n \
   --arg web "https://localhost:$(vcdx_conf VCDX_PORT_WEB)" \
   --argjson wrap_ttl "$(vcdx_conf VCDX_WRAP_TTL)" \
   --argjson council_ttl "$(vcdx_conf VCDX_COUNCIL_TTL)" \
+  --argjson session_idle "$(vcdx_conf VCDX_SESSION_IDLE)" \
+  --argjson session_max "$(vcdx_conf VCDX_SESSION_MAX)" \
   '{vcdx_root: $root, vcdx_tokens_dir: $tokens, vcdx_state_dir: $state, vcdx_ca: $ca,
     vcdx_seal_addr: $seal, vcdx_node_addrs: $nodes, vcdx_cluster_addr: $nodes["vault-1"],
     vcdx_keycloak_addr: $keycloak, vcdx_web_url: $web,
-    vcdx_wrap_ttl: $wrap_ttl, vcdx_council_ttl: $council_ttl}' >"$BUILD_DIR/ansible-vars.json"
+    vcdx_wrap_ttl: $wrap_ttl, vcdx_council_ttl: $council_ttl,
+    vcdx_session_idle: $session_idle, vcdx_session_max: $session_max}' >"$BUILD_DIR/ansible-vars.json"
 
 # A user-run make root-regen leaves a root token file; bootstrap phases may
 # use it (never revoke it: make root-revoke does) to re-apply a policy change.

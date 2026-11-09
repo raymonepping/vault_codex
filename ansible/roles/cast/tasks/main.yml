@@ -77,11 +77,38 @@
       enabled: true
       sslRequired: none
       accessTokenLifespan: 300
-      ssoSessionIdleTimeout: 3600
-      ssoSessionMaxLifespan: 36000
+      ssoSessionIdleTimeout: "{{ vcdx_session_idle }}"
+      ssoSessionMaxLifespan: "{{ vcdx_session_max }}"
       bruteForceProtected: false
     status_code: [201]
   when: cast_realm.status == 404
+  changed_when: true
+  no_log: true
+
+# The presenter must stay signed in from make show-ready until the talk
+# (VCDX_SESSION_IDLE): an existing realm gets the settings too, written only
+# when they differ, so a rerun is changed=0.
+- name: Read the realm's session settings
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex"
+    headers: "{{ cast_auth }}"
+  register: cast_realm_now
+  check_mode: false
+  no_log: true
+
+- name: Set the session lifetimes when they differ
+  ansible.builtin.uri:
+    url: "{{ cast_api }}/codex"
+    method: PUT
+    headers: "{{ cast_auth }}"
+    body_format: json
+    body:
+      ssoSessionIdleTimeout: "{{ vcdx_session_idle | int }}"
+      ssoSessionMaxLifespan: "{{ vcdx_session_max | int }}"
+    status_code: [204]
+  when: >-
+    (cast_realm_now.json.ssoSessionIdleTimeout | int) != (vcdx_session_idle | int) or
+    (cast_realm_now.json.ssoSessionMaxLifespan | int) != (vcdx_session_max | int)
   changed_when: true
   no_log: true
 
@@ -89,11 +116,12 @@
 # codex-console: confidential, Authorization Code + PKCE; the API is its BFF.
 # codex-stagehand: public, direct access grants, LAB ONLY: the API signs the
 # presenter's other personas in with their own passwords (D11).
+# codex-automation: the same, for the lab's own checks (kept out of the ledger).
 - name: Look up both clients
   ansible.builtin.uri:
     url: "{{ cast_api }}/codex/clients?clientId={{ item }}"
     headers: "{{ cast_auth }}"
-  loop: [codex-console, codex-stagehand]
+  loop: [codex-console, codex-stagehand, codex-automation]
   register: cast_clients
   check_mode: false  # a read (or a token); check mode must see the real state
   no_log: true
@@ -142,6 +170,18 @@
       codex-stagehand:
         clientId: codex-stagehand
         name: The presenter's other personas (lab only)
+        protocol: openid-connect
+        publicClient: true
+        standardFlowEnabled: false
+        directAccessGrantsEnabled: true
+        implicitFlowEnabled: false
+        protocolMappers: ["{{ cast_audience_mapper }}"]
+      # Checks, not the show: validate and verify sign the cast in through
+      # this client, and the ledger leaves its sign-ins out (Vault maps the
+      # token's azp into metadata.client, terraform/vault-platform/auth.tf).
+      codex-automation:
+        clientId: codex-automation
+        name: Lab checks (validate, verify; lab only)
         protocol: openid-connect
         publicClient: true
         standardFlowEnabled: false

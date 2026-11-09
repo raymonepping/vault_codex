@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # scripts/show-ready.sh (make show-ready): five minutes before the talk.
-# clock-sync, up, a fresh stage, verify, the console. One green line, or the
-# first failing check with its fix.
+# clock-sync, up, a fresh stage, verify, a fresh stage again, the console. One
+# green line, or the first failing check with its fix. The last reset matters:
+# verify signs in as the Seeker and decrypts (right and wrong answers), and the
+# ledger must start empty or it "confirms" guesses nobody made yet.
 set -euo pipefail
 # shellcheck source=scripts/common.sh
 source "$(dirname -- "$0")/common.sh"
@@ -20,6 +22,7 @@ run "clock-sync" "make clock-sync (podman machine ssh must work)" ./scripts/cloc
 run "up" "make doctor" ./scripts/up.sh
 run "stage-reset" "make stage-reset CONFIRM=yes, then make doctor" env CONFIRM=yes ./scripts/stage-reset.sh
 run "verify" "make verify, then the command it names" ./scripts/verify.sh
+run "a clean ledger" "make stage-reset CONFIRM=yes" env CONFIRM=yes ./scripts/stage-reset.sh
 url="https://localhost:$(vcdx_conf VCDX_PORT_WEB)/#/codex"
 [ "$(uname -s)" = Darwin ] && [ -z "${NO_OPEN:-}" ] && open "$url" || true
 printf '\033[32mshow-ready: green in %ss. The console is at %s. Break a leg.\033[0m\n' "$(($(date +%s) - t0))" "$url"

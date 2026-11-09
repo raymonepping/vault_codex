@@ -45,6 +45,14 @@ from Vault's internal groups.
 | Courier, Interceptor | messengers | `codex-messenger` | unwrap, look up a wrapping token | decrypt anything (the Interceptor's loot stays a ciphertext) |
 | Amber, Ivory, Onyx | keyholders, seekers | `codex-keyholder`, `codex-seeker` | approve the cryptex; request it themselves | count their own approval (the EGP `codex-council-not-yourself` counts only other Keyholders) |
 
+**Three Keycloak clients.** `codex-console` (confidential, code + PKCE) is
+the presenter's sign-in. `codex-stagehand` (public, direct grant) is how the
+API plays the other personas. `codex-automation` (public, direct grant) is how
+the lab's checks sign the cast in (Ansible `validate`, `make verify`,
+`make doctor`). Vault's JWT role maps the token's `azp` into the token's
+metadata as `client`, so every audit entry names the client, and the ledger
+leaves `codex-automation` out of the story (counted as `hidden`).
+
 **The stage-hand shortcut.** One presenter plays every part, so the API holds
 the passwords of the five personas the presenter plays (read-only mounts of
 `.secrets/cast/<user>`) and signs each in with their own Keycloak login

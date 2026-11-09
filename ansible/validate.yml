@@ -57,14 +57,14 @@
         label: "{{ item.item }}"
       no_log: true
 
-    - name: Each persona's Keycloak token (direct grant on codex-stagehand)
+    - name: Each persona's Keycloak token (direct grant on codex-automation, kept out of the ledger)
       ansible.builtin.uri:
         url: "{{ vcdx_keycloak_addr }}/realms/codex/protocol/openid-connect/token"
         method: POST
         body_format: form-urlencoded
         body:
           grant_type: password
-          client_id: codex-stagehand
+          client_id: codex-automation  # a check: the ledger leaves it out
           scope: openid
           username: "{{ item.user }}"
           password: "{{ lookup('ansible.builtin.file', vcdx_root + '/.secrets/cast/' + item.user) }}"

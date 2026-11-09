@@ -2,10 +2,9 @@
 // them, and the stage as Vault holds it right now.
 import { ArrowRight, TerminalSquare } from 'lucide-react';
 import { useResource } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
 import { useAuth, ErrorNotice, Loading, Mono, StatePill, SignInNotice } from '../components/ui.jsx';
 import { ActHero } from '../components/codex.jsx';
-import { forget } from '../story.js';
+import { forget, useStory } from '../story.js';
 
 const MECH = {
   'transform-fpe': 'Transform FPE (FF1)',

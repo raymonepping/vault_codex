@@ -10,6 +10,8 @@ import {
   createLedger,
   newContext,
   parseChunk,
+  STORY_PATHS,
+  isCheck,
   parseLogSpec,
   who,
 } from "../lib/ledger.js";
@@ -256,4 +258,27 @@ test("the ledger reads all nodes incrementally, merged by time", () => {
   );
   assert.equal(l.events().length, 3);
   assert.equal(l.events({ since: "2026-11-09T10:00:02Z" }).length, 2);
+});
+
+test("every story path classifies, and the reader keeps nothing else", () => {
+  for (const p of STORY_PATHS)
+    assert.ok(classify(entry(p, { response: { wrap_info: { token: "hmac-sha256:t", accessor: "a" } } }), {}, newContext()), p);
+  const dir = mkdtempSync(join(tmpdir(), "ledger-"));
+  const f = join(dir, "a.log");
+  writeFileSync(f, [entry("auth/token/lookup-self"), entry("codex/data/stage/act-1"), entry("sys/control-group/authorize")].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  assert.deepEqual(createLedger(`vault-1=${f}`).events().map((e) => e.kind), ["approval"]);
+});
+
+test("the lab's checks (codex-automation) are left out of the story and counted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ledger-"));
+  const f = join(dir, "a.log");
+  const check = entry("transit/decrypt/codex-clues", { auth: { display_name: "jwt-seeker", metadata: { client: "codex-automation", role: "persona" } }, time: "2026-11-09T10:00:01Z" });
+  const show = entry("transit/decrypt/codex-clues", { auth: { display_name: "jwt-seeker", metadata: { client: "codex-console", role: "persona" } }, time: "2026-11-09T10:00:02Z" });
+  assert.equal(isCheck(check), true);
+  assert.equal(isCheck(show), false);
+  assert.equal(isCheck(entry("sys/control-group/authorize")), false); // no client: the show
+  writeFileSync(f, `${JSON.stringify(check)}\n${JSON.stringify(show)}\n`);
+  const l = createLedger(`vault-1=${f}`);
+  assert.deepEqual(l.events().map((e) => e.time), ["2026-11-09T10:00:02Z"]);
+  assert.equal(l.hidden(), 1);
 });

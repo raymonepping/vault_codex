@@ -5,8 +5,7 @@ import { useState } from 'react';
 import { Flame, History, Scissors } from 'lucide-react';
 import { call } from '../api.js';
 import { useAction, useResource } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
-import { remember } from '../story.js';
+import { remember, useStory } from '../story.js';
 import { useAuth, ErrorNotice, SignInNotice, Mono } from '../components/ui.jsx';
 import { ActHero, Riddle, Said, Refusal, AnswerForm, wink } from '../components/codex.jsx';
 
@@ -102,7 +101,7 @@ export default function Act4() {
         {ops?.outcome === 'ash' && <Refusal v={ops.vault} wink={wink.act4} />}
         {ops?.outcome === 'burned' && (
           <p className="inline-notice ok" role="status">
-            Rotated to v{ops.latest_version}; Vault now decrypts nothing older than v{ops.min_decryption_version}.
+            {ops.already ? 'Already burned' : `Rotated to v${ops.latest_version}`}; Vault decrypts nothing older than v{ops.min_decryption_version}.
           </p>
         )}
         {ops?.outcome === 'trimmed' && (

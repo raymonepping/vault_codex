@@ -113,3 +113,11 @@ test('keyboard: arrows move between acts, ? lists the shortcuts', async ({ page 
   await page.locator('body').press('?');
   await expect(page.getByRole('dialog', { name: 'Keyboard' })).toBeVisible();
 });
+
+test('a stage reset makes a rehearsal tab forget what it solved', async ({ page }) => {
+  await page.goto('/#/codex');
+  await page.evaluate(() => sessionStorage.setItem('codex.story', JSON.stringify({ stagedAt: '2000-01-01T00:00:00Z', 'act-1': 'an old riddle' })));
+  await page.reload();
+  await expect(page.locator('.path__step--staged').first()).toBeVisible();
+  await expect(page.getByText('solved here')).toHaveCount(0);
+});

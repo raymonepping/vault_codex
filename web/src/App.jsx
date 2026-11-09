@@ -6,6 +6,7 @@ import { BookOpen, ScrollText, KeyRound, Mail, Users, Flame, History, Layers3, L
 import { useResource, useRoute, useVaultLog } from './hooks.js';
 import { AuthContext, Drawer, signInHref, tidy } from './components/ui.jsx';
 import Footer from './components/Footer.jsx';
+import { followStage } from './story.js';
 import Codex from './pages/Codex.jsx';
 import Prologue from './pages/Prologue.jsx';
 import Act1 from './pages/Act1.jsx';
@@ -172,6 +173,7 @@ export default function App() {
   useEffect(() => {
     document.title = `${page.title} · The Keyholder's Codex`;
   }, [page]);
+  useEffect(() => followStage(health.data?.stagedAt), [health.data?.stagedAt]);
   const toggleFold = () =>
     setFolded((f) => {
       writeFolded(!f);

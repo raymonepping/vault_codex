@@ -168,16 +168,25 @@ phases() {
   done <"$VCDX_ROOT/scripts/phases.txt"
 }
 
-# persona_login <user>: sign a persona in the way the API's stage hand does
-# (Keycloak direct grant on codex-stagehand, then Vault auth/jwt/login role
-# persona) and export VAULT_TOKEN for this shell. Never printed.
-persona_login() {
-  local user=$1 kc at
+# persona_access_token <user> [client]: a persona's Keycloak access token by
+# direct grant. codex-stagehand (the default) plays the show, as the API's stage
+# hand does; codex-automation is for checks, which the ledger leaves out. The
+# password goes to curl on stdin, never on its command line. Print it only
+# into a variable.
+persona_access_token() {
+  local kc
   kc="http://127.0.0.1:$(vcdx_conf VCDX_PORT_KEYCLOAK)/realms/codex/protocol/openid-connect/token"
-  # The password goes to curl on stdin, never on its command line.
-  at=$(tr -d '\n' <"$VCDX_ROOT/.secrets/cast/$user" | curl -sf "$kc" -d grant_type=password \
-    -d client_id=codex-stagehand -d scope=openid --data-urlencode "username=$user" \
-    --data-urlencode "password@-" | jq -er '.access_token') || {
+  tr -d '\n' <"$VCDX_ROOT/.secrets/cast/$1" | curl -sf "$kc" -d grant_type=password \
+    -d "client_id=${2:-codex-stagehand}" -d scope=openid --data-urlencode "username=$1" \
+    --data-urlencode "password@-" | jq -er '.access_token'
+}
+
+# persona_login <user> [client]: that token (codex-automation by default: a
+# check, not the show), then Vault auth/jwt/login role persona; exports
+# VAULT_TOKEN for this shell. Never printed.
+persona_login() {
+  local user=$1 at
+  at=$(persona_access_token "$user" "${2:-codex-automation}") || {
     echo "persona_login: Keycloak refused $user" >&2
     return 1
   }

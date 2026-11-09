@@ -91,10 +91,9 @@ After a rehearsal: `make stage-reset CONFIRM=yes`.
 
 | Command | What it proves |
 | --- | --- |
-| `make verify` | 90 read-only checks: Podman, every node, platform, stage, app, console, boundary, drift |
-| `make rehearsal` | every act through the API, each way it must fail (42 cases) |
-| `make api-test` | every API route on the live stack (35 cases) |
-| `make test-ui` | the whole show in a browser at 1440x900 and 390x844, axe on every page |
+| `make verify` | 84 read-only checks: Podman, every node, platform, stage, app, console, boundary, drift |
+| `make rehearsal` (or `make api-test`) | every API route and every act, each way it must fail, a reset mid-show, a cross-site write, checks kept out of the ledger (58 cases) |
+| `make test-ui` | the whole show in a browser at 1440x900 and 390x844, axe on every page (24 tests) |
 | `make probe` | every mechanic proven on scratch mounts; writes `docs/capabilities.md` |
 | `make boundary` | each scoped token can do its job and nothing else (27 checks) |
 | `make idempotency`, `make drift`, `make secret-scan` | the gates of `make lab` |

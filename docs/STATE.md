@@ -533,3 +533,124 @@ API still held the delivered letter. New route `GET /api/act/2/state`
 (`letter`, `delivered` for this session); the page reads it on load and after
 each delivery, and the hint names the next button when the seal is broken.
 `make test-ui` 23 passed.
+
+## After the first commit: the reformatted API on the live stack (2026-11-09)
+
+`commit_gh`'s pre-commit hook (`sanity_check --fix`) reformatted 14 API files
+(line wrapping only) and then hung; the hook was removed and the commit made
+with `commit_gh --no-hook` (5e3ede2). The rebuilt API on the live stack:
+`make api-test` 35/0, `make rehearsal` 42/0, `make test-ui` 23 passed,
+`make verify` 90/0, `make lint` clean.
+
+Two fixes found on the way:
+
+- `api-test.sh` now resets the stage first: a show in the browser had burned
+  the map, so every act answered `too old`.
+- `verify` checked that the agent's sink file changed in the last hour; Vault
+  Agent renews the token in place and rewrites the file only on a new login.
+  It now checks that Vault accepts the sink token with more than 5 minutes left.
+
+## The audit's fixes 1 to 7 (2026-11-09)
+
+From `/ponytail:ponytail-audit`, all on the live stack:
+
+1. **A stage reset forgot nothing:** the API kept the delivered letter and
+   the council request of the old stage, so after `make show-ready` the right
+   answer was refused. Each is now tagged with its act's `staged_at` and
+   forgotten when the stage changed (`forgetStale` in `api/server.js`).
+   api-test proves it mid-show.
+2. **Cross-site writes:** every `https://localhost:<port>` is the same site, so
+   `SameSite=Lax` still sent the cookie with a POST from another local app.
+   POSTs whose `Sec-Fetch-Site` is present and not `same-origin`/`none` are
+   refused (403); unit test plus an api-test case.
+3. **The letter's countdown and rehearsal R9** counted from Vault's
+   `creation_time` (the VM clock, which drifts); both now count the TTL from
+   when the letter arrived.
+4. `verify` checked the same `/` eight times (a `#` fragment is never sent);
+   one check now: 83 checks instead of 90.
+5. Unit test for the sign-in callback: an unknown state and a reused state
+   are refused (a mutation check confirmed the test fails without
+   `pending.delete(state)`).
+6. Removed dead code: `web/src/format.js`, `Confirm`, `Check`, `.confirm` CSS.
+7. The ledger keeps only the 11 story paths `classify()` knows (a test keeps
+   both lists in step); the API used 38.5 MB after the change.
+
+Validation: `make test-unit` (API 29 pass), `make lint` clean, `make api-test`
+44/0, `make rehearsal` 42/0, `make test-ui` 23 passed, `make verify` 83/0.
+
+## The second audit's fixes 1 to 4 (2026-11-09)
+
+1. **The ledger "remembered" guesses before the show:** `verify` (inside
+   `show-ready`) runs `validate`, which decrypts as the Seeker with the right
+   answer and with `france`. `show-ready` now ends with a second
+   `stage-reset`; the rehearsal resets again after R21. Proven: right after
+   `make show-ready` the ledger holds one event (the check's own sign-in) and
+   `france` is "never tried".
+2. **Audit logs only grew** (vault-1: 30 MB after a day of tests).
+   `stage-reset` now moves each node's `audit.log` to `audit.log.1` and sends
+   SIGHUP; Vault reopens a fresh file and the API's ledger follows.
+3. **`api-test.sh` merged into `rehearsal.sh`** (R0 health/me/codex, R22 a
+   reset mid-show, R23 a cross-site write); `make api-test` runs the
+   rehearsal; `persona_access_token` in `common.sh` is the one Keycloak
+   sign-in for scripts. 54 cases.
+4. **Act II follows the API both ways:** a 409 on the answer reloads the
+   letter state, and the page drops "delivered" when the API forgot it.
+
+Validation: `make rehearsal` 54/0, `NO_OPEN=1 make show-ready` green (134s),
+`make test-ui` 23 passed, `make verify` 83/0, `make lint` clean,
+`make test-unit` all pass.
+
+Review follow-up: rehearsal R22 now also checks that the ledger reads the
+new audit file after the rotation (55 cases, 55/0); CHANGELOG has an
+`[Unreleased]` section for these fixes.
+
+## Backend audit 1 to 5 and third ponytail audit 1 to 4 (2026-11-09)
+
+- A dropped presenter session logs why (Keycloak refused the refresh, or
+  Vault the login); a 500 logs the stack; one JSON line per API request
+  (method, path, status, ms, `vault_request_id`; quiet for healthy polls).
+- `POST /api/act/4/burn` is idempotent: already burned (minimum = latest,
+  above 1) answers `already: true` without rotating (rehearsal R16).
+- Unfinished sign-ins capped at 100, oldest first (unit test).
+- Session lifetime: `VCDX_SESSION_IDLE` (4h) and `VCDX_SESSION_MAX` (12h) in
+  `config/defaults.conf`, for Keycloak's realm and the API alike; the `cast`
+  role writes them on an existing realm only when they differ (`changed=0` on
+  rerun and in check mode); `verify` checks the live realm.
+- `/api/health` carries the stage's `stagedAt`; the console forgets a
+  rehearsal tab's reveals when it changes (`followStage` in `story.js`, which
+  now also holds `useStory`; `hooks-story.js` removed). e2e test added.
+- `make verify` and `make doctor` help, and `docs/operations.md`, say they
+  sign in as the cast and decrypt: not during a show.
+- Design pass (frontend-design): sentence-case act labels and riddle labels,
+  the Validation gate's time from the phase's own recap, no Make pill,
+  tabular sans for ledger times.
+
+Validation: `make test-unit` (API 30 pass), `make lint` clean, `make
+rehearsal` 56/0, `make test-ui` 24 passed, `make verify` 84/0, `scripts/
+ansible.sh cast` twice (`changed=1` then `0`) and `--check` (`changed=0`).
+
+## The ledger leaves the lab's checks out (2026-11-09, design built)
+
+The design from `/backend-design:design`, built on the user's go-ahead:
+
+- Keycloak client `codex-automation` (public, direct grant, audience
+  mapper), created by `cast` like the other two.
+- Terraform: role `persona` maps the token's `azp` into metadata
+  (`claim_mappings = { azp = "client" }`). **Proven on 2.2.1:** the login
+  response and every audit entry carry `auth.metadata.client` in clear
+  (`codex-automation` / `codex-stagehand`). The probe case was replaced by
+  this live check: the probe's 4h token had expired, and re-minting it needs
+  a root-regen the user did not ask for.
+- Ansible `validate` and `persona_login` (verify, rehearsal's direct cases)
+  sign in through `codex-automation`; the rehearsal's own Seeker and the API's
+  stage hands keep `codex-stagehand`.
+- `api/lib/ledger.js`: `isCheck(e)` leaves those entries out of `events()`;
+  `hidden()` counts them; `/api/ledger` returns `hidden`. Unit test.
+- Rehearsal R24: `validate` mid-rehearsal adds no Seeker event, and `hidden`
+  grows.
+- The "not during a show" warnings on `make verify` and `make doctor` are
+  gone; `docs/security-model.md` names the three clients.
+
+Validation: `scripts/ansible.sh validate` (changed=0), `make test-unit` (API
+31 pass), `make lint` clean, `make rehearsal` 58/0 (R24 passes), `make verify`
+84/0, `make test-ui` 24 passed, `make tf-plan-all` both empty.

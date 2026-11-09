@@ -18,18 +18,13 @@
 
 /* ── The hero: act, title, riddle ──────────────────────────────────────── */
 .codex-hero { padding: 26px 30px 28px; }
-.codex-hero__number {
-  margin: 0 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--vg-text-muted);
-}
+/* Sentence case, not tracked caps: the act reads like a chapter heading. */
+.codex-hero__number { margin: 0 0 2px; font-size: 15px; font-weight: 600; color: var(--vg-text-muted); }
 .codex-hero__title { font-size: 32px; }
 .codex-hero__hint { margin: 14px 0 0; font-size: 15px; color: var(--vg-text-secondary); }
 .codex-split { margin: 14px 0 0; font-size: 14px; color: var(--vg-text-secondary); font-style: italic; }
 .riddle { margin: 18px 0 0; max-width: 980px; }
-.riddle__label {
-  font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--vg-action-bright); margin-bottom: 8px;
-}
+.riddle__label { font-size: 14px; font-weight: 600; font-style: italic; color: var(--vg-action-bright); margin-bottom: 8px; }
 /* Presenter scale: at least 28px at 1440x900, legible from the back of a room. */
 .riddle__text {
   margin: 0; font-size: clamp(22px, 2.1vw, 34px); line-height: 1.3; font-weight: 600;
@@ -91,7 +86,7 @@ kbd {
   display: flex; align-items: baseline; gap: 16px; padding: 14px 18px; border-radius: 12px;
   background: var(--vg-well); border: 1px dashed var(--vg-border-strong);
 }
-.ledger-line__label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vg-text-muted); }
+.ledger-line__label { font-size: 13px; font-weight: 600; color: var(--vg-text-muted); }
 .digits { font-family: var(--font-mono); font-size: 34px; font-weight: 600; letter-spacing: 0.06em; display: inline-flex; }
 .digit { display: inline-block; }
 .digits--settle .digit { animation: digit-settle 700ms var(--vg-ease-out) both; }
@@ -171,7 +166,9 @@ kbd {
   font-size: 13px; padding: 6px 10px; border-radius: 8px; background: var(--vg-well);
 }
 .ledger__event--refused { background: color-mix(in srgb, var(--vg-hue-red) 5%, var(--vg-well)); }
-.ledger__time, .ledger__node { font-family: var(--font-mono); font-size: 12px; color: var(--vg-text-secondary); }
+/* Times are data (tabular sans); node names are identifiers (mono). */
+.ledger__time { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--vg-text-secondary); }
+.ledger__node { font-family: var(--font-mono); font-size: 12px; color: var(--vg-text-secondary); }
 .ledger__act { font-weight: 700; }
 .ledger__who { font-weight: 600; }
 

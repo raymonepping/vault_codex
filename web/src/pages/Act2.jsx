@@ -5,16 +5,17 @@ import { useEffect, useState } from 'react';
 import { Mail, ShieldAlert, Send, RotateCcw } from 'lucide-react';
 import { call } from '../api.js';
 import { useAction, useResource } from '../hooks.js';
-import { useStory } from '../hooks-story.js';
-import { remember } from '../story.js';
+import { remember, useStory } from '../story.js';
 import { useAuth, ErrorNotice, SignInNotice, Mono, StatePill } from '../components/ui.jsx';
 import { ActHero, Riddle, Said, Refusal, AnswerForm, wink } from '../components/codex.jsx';
 
 function useCountdown(letter) {
   const [left, setLeft] = useState(null);
   useEffect(() => {
-    if (!letter?.creation_time) return undefined;
-    const end = new Date(letter.creation_time).getTime() + letter.ttl * 1000;
+    if (!letter?.receivedAt) return undefined;
+    // From when the letter reached this browser, not Vault's creation_time:
+    // the Podman VM's clock drifts (146s seen), the Mac's does not.
+    const end = letter.receivedAt + letter.ttl * 1000;
     const tick = () => setLeft(Math.max(0, Math.round((end - Date.now()) / 1000)));
     tick();
     const t = setInterval(tick, 1000);
@@ -41,11 +42,14 @@ export default function Act2() {
   const [seal, setSeal] = useState('none'); // none | intact | broken | delivered
   const [events, setEvents] = useState([]);
   const [answerRes, setAnswerRes] = useState(null);
-  // The API holds the letter; after a reload the page asks it where things stand.
+  // The API holds the letter. Each fresh answer from it (on load, after a
+  // delivery, after a 409) moves the page to match: delivered, or not any more
+  // (a stage reset forgot it). Only new data triggers this, never a seal change.
   const server = useResource('act2-state', '/api/act/2/state');
   useEffect(() => {
-    if (server.data?.delivered && seal === 'none') setSeal('delivered');
-  }, [server.data, seal]);
+    if (!server.data) return;
+    setSeal((s) => (server.data.delivered ? (s === 'none' ? 'delivered' : s) : s === 'delivered' ? 'none' : s));
+  }, [server.data]);
   const left = useCountdown(seal === 'intact' ? letter : null);
   const log = (title, r) => setEvents((e) => [{ n: e.length + 1, title, r }, ...e]);
 
@@ -53,7 +57,7 @@ export default function Act2() {
     const r = await call('Act II: seal a letter', '/api/act/2/letter', { method: 'POST' });
     log('The Archivist seals a letter', r);
     if (r.outcome === 'sealed') {
-      setLetter(r.letter);
+      setLetter({ ...r.letter, receivedAt: Date.now() });
       setSeal('intact');
     }
     return r;
@@ -72,7 +76,10 @@ export default function Act2() {
     return r;
   });
   const answer = useAction(async (word) => {
-    const r = await call('Act II: an answer', '/api/act/2/answer', { method: 'POST', body: { answer: word } });
+    const r = await call('Act II: an answer', '/api/act/2/answer', { method: 'POST', body: { answer: word } }).catch((e) => {
+      if (e.status === 409) server.reload(); // the letter is gone (a reset): show it
+      throw e;
+    });
     setAnswerRes(r);
     if (r.reveal) remember({ 'act-2': r.reveal.text });
     return r;

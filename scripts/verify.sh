@@ -90,11 +90,22 @@ section_vault() {
   check "Terraform state is 0600" bash -c '! find .secrets/terraform -name "*.tfstate*" ! -perm 600 | grep . >/dev/null'
 }
 
+# The realm's idle timeout, read with the Keycloak admin password on stdin.
+realm_idle_ok() {
+  local kc at
+  kc="http://127.0.0.1:$(vcdx_conf VCDX_PORT_KEYCLOAK)"
+  at=$(tr -d '\n' <.secrets/keycloak/admin-password | curl -sf "$kc/realms/master/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=admin-cli -d username=admin --data-urlencode "password@-" | jq -er .access_token) || return 1
+  curl -sf -H "Authorization: Bearer $at" "$kc/admin/realms/codex" |
+    jq -e --argjson want "$(vcdx_conf VCDX_SESSION_IDLE)" '.ssoSessionIdleTimeout == $want' >/dev/null
+}
+
 section_platform() {
   echo "platform"
   check "vcdx-keycloak healthy" healthy vcdx-keycloak
   check "Keycloak image is native arm64" native "$(vcdx_conf KEYCLOAK_IMAGE)"
   check "realm codex publishes its signing keys" curl -sf "http://127.0.0.1:$(vcdx_conf VCDX_PORT_KEYCLOAK)/realms/codex/protocol/openid-connect/certs"
+  check "the presenter stays signed in $(($(vcdx_conf VCDX_SESSION_IDLE) / 3600))h idle (realm codex)" realm_idle_ok
   vault_cluster
   vault_token ansible-platform
   local m
@@ -145,7 +156,9 @@ section_app() {
   local c
   for c in vcdx-rotator vcdx-vault_agent vcdx-api; do check "$c healthy" healthy "$c"; done
   check "the Archivist's identity, end to end (make agents-status)" ./scripts/agents-status.sh
-  check "the agent's sink was refreshed in the last hour" bash -c "podman exec vcdx-vault_agent find /vault/secrets/token -mmin -60 | grep . >/dev/null"
+  # The agent renews its token in place; the file changes only on a new login.
+  check "the agent's sink token is accepted, more than 5 minutes left" bash -c \
+    "podman exec vcdx-vault_agent sh -c 'VAULT_TOKEN=\$(cat /vault/secrets/token) vault token lookup -format=json' | jq -e '.data.ttl > 300' >/dev/null"
   check "API health: three nodes, the Archivist's token, three audit logs readable" bash -c \
     "curl -sf http://127.0.0.1:$(vcdx_conf VCDX_PORT_API)/api/health | jq -e '(.nodes | map(select(.reachable)) | length == 3) and .archivist.tokenPresent and ([.audit[] | select(.error == null)] | length == 3)'"
   check "API image is native arm64" native "$(vcdx_conf VCDX_IMAGE_PREFIX)/api:$(vcdx_conf VCDX_IMAGE_TAG)"
@@ -165,10 +178,8 @@ section_console() {
   check "TLS 1.3, chain verifies against the lab CA" bash -c "openssl s_client -connect $web -tls1_3 -servername localhost -CAfile vault-tls/ca-chain.pem -verify_return_error </dev/null 2>/dev/null | grep -F 'Verify return code: 0' >/dev/null"
   check "TLS 1.2 refused" bash -c "! openssl s_client -connect $web -tls1_2 </dev/null >/dev/null 2>&1"
   check "Content-Security-Policy without unsafe-inline scripts" bash -c "curl -sI --cacert vault-tls/ca-chain.pem https://$web/ | grep -i '^content-security-policy:' | grep -F \"script-src 'self'\" | grep -vF unsafe-inline >/dev/null"
-  local p
-  for p in codex prologue act-1 act-2 act-3 act-4 ledger layers; do
-    check "page #/$p is served (200)" bash -c "test \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert vault-tls/ca-chain.pem 'https://$web/#/$p')\" = 200"
-  done
+  # One page: the part after # never reaches the server. Each page is make test-ui's.
+  check "the console page is served (200)" bash -c "test \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert vault-tls/ca-chain.pem 'https://$web/')\" = 200"
   check "the console proxies the API" bash -c "curl -sf --cacert vault-tls/ca-chain.pem https://$web/api/health | jq -e .ok >/dev/null"
   check "the sign-in starts at Keycloak (PKCE)" bash -c "curl -s -o /dev/null -w '%{redirect_url}' --cacert vault-tls/ca-chain.pem https://$web/auth/login | grep -F 'code_challenge_method=S256' >/dev/null"
   check "no one-shot init container left behind" bash -c "! podman ps -a --filter name=^vcdx-volume_init --format '{{.Names}}' | grep . >/dev/null"

@@ -7,6 +7,23 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
 const MAX_EVENTS = 20_000;
 
+// The only paths classify() turns into story events. Everything else (token
+// lookups, stage reads, health) is dropped while reading: less memory, less
+// to sort on every poll.
+export const STORY_PATHS = new Set([
+  "auth/jwt/login",
+  "transform/decode/codex-scribe",
+  "transit/decrypt/codex-clues",
+  "transit/decrypt/codex-cryptex",
+  "codex/data/stage/act-2",
+  "sys/wrapping/unwrap",
+  "sys/wrapping/lookup",
+  "sys/control-group/authorize",
+  "transit/keys/codex-clues/rotate",
+  "transit/keys/codex-clues/config",
+  "transit/keys/codex-clues/trim",
+]);
+
 // "vault-1=/audit/vault-1/audit.log,..." -> [{ node, file }]
 export function parseLogSpec(spec) {
   return String(spec || "")
@@ -31,6 +48,11 @@ export function who(auth) {
   if (d.startsWith("token-vcdx-")) return d.slice(11);
   return d || "unknown";
 }
+
+// The lab's own checks (Ansible validate, make verify, make doctor) sign the
+// cast in through Keycloak client codex-automation; Vault maps the token's azp
+// into metadata.client. Those calls are not the show.
+export const isCheck = (e) => e?.auth?.metadata?.client === "codex-automation";
 
 // The audit log keeps most refusals as a bare "invalid request" (Vault's own
 // text reaches only the caller), so the story is read from STATE, in time
@@ -175,7 +197,7 @@ export function createLedger(spec = process.env.AUDIT_LOGS) {
           );
           f.rest = rest;
           for (const e of entries)
-            if (e.type === "response" && e.request?.path) f.entries.push(e);
+            if (e.type === "response" && STORY_PATHS.has(e.request?.path)) f.entries.push(e);
           if (f.entries.length > MAX_EVENTS)
             f.entries.splice(0, f.entries.length - MAX_EVENTS);
         }
@@ -206,7 +228,7 @@ export function createLedger(spec = process.env.AUDIT_LOGS) {
       const all = [];
       for (const f of files)
         for (const e of f.entries)
-          if (!since || e.time >= since) all.push([e, f.node]);
+          if ((!since || e.time >= since) && !isCheck(e)) all.push([e, f.node]);
       all.sort((a, b) =>
         a[0].time < b[0].time ? -1 : a[0].time > b[0].time ? 1 : 0,
       );
@@ -217,6 +239,13 @@ export function createLedger(spec = process.env.AUDIT_LOGS) {
         if (ev) out.push({ ...ev, node });
       }
       return out;
+    },
+    // How many story-path calls since `since` were the lab's checks (left out).
+    hidden({ since } = {}) {
+      refresh();
+      let n = 0;
+      for (const f of files) for (const e of f.entries) if ((!since || e.time >= since) && isCheck(e)) n++;
+      return n;
     },
   };
 }

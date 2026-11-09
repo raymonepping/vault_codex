@@ -281,8 +281,8 @@ test-unit: ## Unit tests, no stack needed: codex-check, api, web
 	@if [ -f api/package.json ]; then cd api && npm test; fi
 	@if [ -f web/package.json ]; then cd web && npm test; fi
 
-api-test: ## Call every API route against the live stack, as each persona
-	$(call run,api-test.sh)
+api-test: ## Same as make rehearsal: every API route, every act, every refusal
+	$(call run,rehearsal.sh)
 
 # Playwright against the live stack; nothing is mocked.
 E2E := cd e2e && npx playwright test

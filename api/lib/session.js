@@ -36,8 +36,11 @@ export const CONSOLE_URL = (
 ).replace(/\/$/, "");
 const REDIRECT_URI = `${CONSOLE_URL}/auth/callback`;
 export const COOKIE = "codex_sid";
-const SESSION_IDLE_MS = 2 * 60 * 60 * 1000;
+// Matches the realm's ssoSessionIdleTimeout (VCDX_SESSION_IDLE, default 4h):
+// the presenter stays signed in from make show-ready until the talk.
+const SESSION_IDLE_MS = Number(process.env.SESSION_IDLE_SECONDS || 14400) * 1000;
 const PENDING_MS = 10 * 60 * 1000;
+const PENDING_MAX = 100; // sign-ins started and not finished; the oldest go first
 
 export class Unauthenticated extends Error {}
 
@@ -71,6 +74,17 @@ export function parseCookies(header) {
 export function sessionCookie(id, maxAgeSeconds) {
   return `${COOKIE}=${id}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
 }
+
+// Every https://localhost:<port> is the SAME site, so SameSite=Lax still sends
+// the cookie with a POST from another local app (another lab's console, a dev
+// server). Browsers say where a request came from in Sec-Fetch-Site; a write
+// from anywhere but this origin (or typed/scripted: "none" or no header) is
+// refused before it can burn the map or approve as a Keyholder.
+export const crossSiteWrite = (req) => {
+  if (req.method === "GET" || req.method === "HEAD") return false;
+  const site = req.headers["sec-fetch-site"];
+  return Boolean(site) && site !== "same-origin" && site !== "none";
+};
 
 export const safeReturn = (v) =>
   /^\/(#\/[a-z0-9-]+)?$/.test(String(v || "/")) ? String(v) : "/";
@@ -150,6 +164,8 @@ export function login(url) {
     returnTo: safeReturn(url.searchParams.get("return")),
     at: Date.now(),
   });
+  // A Map keeps insertion order: drop the oldest unfinished sign-ins.
+  while (pending.size > PENDING_MAX) pending.delete(pending.keys().next().value);
   const q = new URLSearchParams({
     client_id: CLIENT_ID,
     response_type: "code",
@@ -254,7 +270,9 @@ export async function person(req) {
         });
       }
       s.vault = await vaultLogin(s.accessToken);
-    } catch {
+    } catch (e) {
+      // Keycloak refused the refresh (idle too long) or Vault refused the login.
+      console.error(`[codex-api] session of ${s.user} ended: ${e.message}`);
       sessions.delete(s.id);
       return null;
     }

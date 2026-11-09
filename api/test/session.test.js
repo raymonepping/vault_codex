@@ -6,6 +6,10 @@ import {
   pkceChallenge,
   safeReturn,
   decodeJwt,
+  crossSiteWrite,
+  login,
+  callback,
+  Unauthenticated,
   COOKIE,
 } from "../lib/session.js";
 
@@ -42,4 +46,29 @@ test("only same-origin hash routes survive the round trip", () => {
 test("decodeJwt reads the payload", () => {
   const t = `x.${Buffer.from(JSON.stringify({ preferred_username: "seeker" })).toString("base64url")}.y`;
   assert.equal(decodeJwt(t).preferred_username, "seeker");
+});
+
+test("a write from another site (another localhost port) is refused, this origin and scripts are not", () => {
+  const req = (method, site) => ({ method, headers: site ? { "sec-fetch-site": site } : {} });
+  assert.equal(crossSiteWrite(req("POST", "same-site")), true);
+  assert.equal(crossSiteWrite(req("POST", "cross-site")), true);
+  assert.equal(crossSiteWrite(req("POST", "same-origin")), false);
+  assert.equal(crossSiteWrite(req("POST", "none")), false);
+  assert.equal(crossSiteWrite(req("POST")), false);
+  assert.equal(crossSiteWrite(req("GET", "cross-site")), false);
+});
+
+test("the callback refuses an unknown state, and a state used once cannot be used again", async () => {
+  await assert.rejects(callback(new URL("https://c/auth/callback?state=never-issued&code=x")), Unauthenticated);
+  const state = new URL(login(new URL("https://c/auth/login"))).searchParams.get("state");
+  // First use: Keycloak reported an error, but the state is spent either way.
+  await assert.rejects(callback(new URL(`https://c/auth/callback?state=${state}&error=access_denied`)), /Keycloak: access_denied/);
+  await assert.rejects(callback(new URL(`https://c/auth/callback?state=${state}&code=x`)), /expired or was not started here/);
+});
+
+test("unfinished sign-ins are capped: the oldest state is dropped first", async () => {
+  const states = [];
+  for (let i = 0; i < 101; i++) states.push(new URL(login(new URL("https://c/auth/login"))).searchParams.get("state"));
+  await assert.rejects(callback(new URL(`https://c/auth/callback?state=${states[0]}&code=x`)), /expired or was not started here/);
+  await assert.rejects(callback(new URL(`https://c/auth/callback?state=${states[100]}&error=access_denied`)), /Keycloak: access_denied/);
 });

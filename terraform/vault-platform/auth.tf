@@ -24,6 +24,12 @@ resource "vault_jwt_auth_backend_role" "persona" {
   token_policies  = ["default"]
   token_ttl       = 3600
   token_max_ttl   = 14400
+  # Which Keycloak client asked for the token (azp) lands in the token's
+  # metadata as "client", and so in every audit entry: the ledger leaves
+  # codex-automation (the lab's checks) out of the story.
+  claim_mappings = {
+    azp = "client"
+  }
 }
 
 resource "vault_auth_backend" "approle" {
